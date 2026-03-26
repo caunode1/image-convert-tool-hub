@@ -257,9 +257,15 @@ button {
   font-weight: 700;
 }
 
-.workspace-shell {
+.workspace-shell,
+.workbench-stack {
   display: grid;
   gap: 18px;
+}
+
+.compact-shell,
+.compact-topbar {
+  gap: 14px;
 }
 
 .tool-stage-grid {
@@ -531,6 +537,32 @@ button {
   color: var(--muted);
   font-size: 0.9rem;
   white-space: nowrap;
+}
+
+.results-list {
+  display: grid;
+  gap: 10px;
+}
+
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.result-row strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.result-row p {
+  margin: 0;
+  color: var(--muted);
 }
 
 .site-footer {

@@ -1,26 +1,32 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
+import JSZip from 'jszip'
 import './App.css'
 import { guides, siteInfo, staticPages, type Guide } from './siteContent'
 
 type ToolMode = 'convert' | 'optimize'
 type TargetFormat = 'image/jpeg' | 'image/png' | 'image/webp'
 
-type ConvertedFile = {
-  blob: Blob
+type SourceItem = {
+  id: string
+  file: File
+  previewUrl: string
+  width: number
+  height: number
+  sizeLabel: string
+  mimeType: string
+}
+
+type ConvertedItem = {
+  id: string
+  sourceId: string
   filename: string
   sizeLabel: string
   mimeType: TargetFormat
   width: number
   height: number
   reductionText: string
-}
-
-type OriginalInfo = {
-  width: number
-  height: number
-  sizeLabel: string
-  mimeType: string
-  filename: string
+  url: string
+  blob: Blob
 }
 
 function normalizePath(pathname: string) {
@@ -59,10 +65,14 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
 }
 
-function mimeToLabel(mime: TargetFormat) {
+function mimeToLabel(mime: TargetFormat | string) {
   if (mime === 'image/jpeg') return 'JPG'
   if (mime === 'image/png') return 'PNG'
-  return 'WEBP'
+  if (mime === 'image/webp') return 'WEBP'
+  if (mime === 'image/bmp') return 'BMP'
+  if (mime === 'image/gif') return 'GIF'
+  if (mime === 'image/svg+xml') return 'SVG'
+  return mime.replace('image/', '').toUpperCase()
 }
 
 function mimeToExtension(mime: TargetFormat) {
@@ -72,18 +82,25 @@ function mimeToExtension(mime: TargetFormat) {
 }
 
 function mimeFromFile(file: File) {
-  if (file.type === 'image/png' || file.type === 'image/jpeg' || file.type === 'image/webp') return file.type
+  if (
+    file.type === 'image/png' ||
+    file.type === 'image/jpeg' ||
+    file.type === 'image/webp' ||
+    file.type === 'image/bmp' ||
+    file.type === 'image/gif' ||
+    file.type === 'image/svg+xml'
+  ) {
+    return file.type
+  }
+
   const lower = file.name.toLowerCase()
   if (lower.endsWith('.png')) return 'image/png'
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
   if (lower.endsWith('.webp')) return 'image/webp'
+  if (lower.endsWith('.bmp')) return 'image/bmp'
+  if (lower.endsWith('.gif')) return 'image/gif'
+  if (lower.endsWith('.svg')) return 'image/svg+xml'
   return 'application/octet-stream'
-}
-
-function originalMimeToTarget(mime: string): TargetFormat {
-  if (mime === 'image/png') return 'image/png'
-  if (mime === 'image/webp') return 'image/webp'
-  return 'image/jpeg'
 }
 
 function fileNameWithoutExtension(name: string) {
@@ -133,6 +150,7 @@ async function convertFile(options: {
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, width, height)
   }
+
   ctx.drawImage(image, 0, 0, width, height)
 
   const blob = await new Promise<Blob | null>((resolve) => {
@@ -140,12 +158,7 @@ async function convertFile(options: {
   })
 
   if (!blob) throw new Error('변환 결과를 만들지 못했습니다.')
-
-  return {
-    blob,
-    width,
-    height,
-  }
+  return { blob, width, height }
 }
 
 function GuideList({ onNavigate }: { onNavigate: (path: string) => void }) {
@@ -156,7 +169,7 @@ function GuideList({ onNavigate }: { onNavigate: (path: string) => void }) {
         <h1>이미지 변환 전에 읽어두면 좋은 가이드</h1>
         <p>포맷 차이, 화질 저하, 용량 줄이기 같은 내용을 실제 사용 기준으로 정리했습니다.</p>
       </div>
-      <div className="card-grid">
+      <div className="card-grid three-up">
         {guides.map((guide) => (
           <article key={guide.slug} className="surface-card guide-card">
             <p className="card-kicker">{guide.category}</p>
@@ -236,24 +249,32 @@ function StaticPage({ pageKey }: { pageKey: string }) {
 function App() {
   const [path, setPath] = useState(() => normalizePath(window.location.pathname))
   const [mode, setMode] = useState<ToolMode>('convert')
-  const [file, setFile] = useState<File | null>(null)
-  const [previewUrl, setPreviewUrl] = useState('')
+  const [sourceItems, setSourceItems] = useState<SourceItem[]>([])
   const [targetFormat, setTargetFormat] = useState<TargetFormat>('image/jpeg')
   const [quality, setQuality] = useState(0.9)
   const [resizeEnabled, setResizeEnabled] = useState(false)
   const [keepAspectRatio, setKeepAspectRatio] = useState(true)
   const [resizeWidth, setResizeWidth] = useState('')
   const [resizeHeight, setResizeHeight] = useState('')
-  const [originalInfo, setOriginalInfo] = useState<OriginalInfo | null>(null)
-  const [result, setResult] = useState<ConvertedFile | null>(null)
-  const [resultUrl, setResultUrl] = useState('')
+  const [results, setResults] = useState<ConvertedItem[]>([])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
-  const downloadUrlRef = useRef<string>('')
 
   const currentGuide = useMemo(() => guides.find((guide) => `/guides/${guide.slug}` === path) ?? null, [path])
   const staticKey = useMemo(() => path.replace('/', ''), [path])
+  const firstSource = sourceItems[0] ?? null
+  const firstResult = results[0] ?? null
+  const originalMime = firstSource?.mimeType ?? ''
+  const targetLabel = mimeToLabel(targetFormat)
+  const originalLabel = originalMime ? mimeToLabel(originalMime) : '알 수 없음'
+  const isTransparentToJpg = targetFormat === 'image/jpeg' && (originalMime === 'image/png' || originalMime === 'image/webp' || originalMime === 'image/gif' || originalMime === 'image/svg+xml')
+  const qualityDisabled = targetFormat === 'image/png'
+  const qualityHelper = qualityDisabled
+    ? 'PNG는 품질 슬라이더 영향이 작고, 주로 크기 조절이 용량에 더 크게 작용합니다.'
+    : mode === 'optimize'
+      ? '용량을 많이 줄이고 싶다면 70~85%부터 비교해 보시는 것을 권장합니다.'
+      : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다.'
 
   const seoMeta = useMemo(() => {
     if (currentGuide) return { title: `${currentGuide.title} | ${siteInfo.name}`, description: currentGuide.description }
@@ -264,19 +285,8 @@ function App() {
     if (path === '/terms') return { title: `이용안내 | ${siteInfo.name}`, description: staticPages.terms.description }
     if (path === '/contact') return { title: `문의 | ${siteInfo.name}`, description: staticPages.contact.description }
     if (path === '/faq') return { title: `자주 묻는 질문 | ${siteInfo.name}`, description: staticPages.faq.description }
-    return { title: `${siteInfo.name} | 브라우저에서 바로 쓰는 이미지 변환 도구`, description: siteInfo.description }
+    return { title: `${siteInfo.name} | 여러 이미지 파일을 한 번에 변환하는 도구`, description: siteInfo.description }
   }, [currentGuide, path])
-
-  const originalMime = originalInfo?.mimeType ?? ''
-  const targetLabel = mimeToLabel(targetFormat)
-  const originalLabel = originalMime === 'application/octet-stream' ? '알 수 없음' : originalMime.replace('image/', '').toUpperCase()
-  const isTransparentToJpg = targetFormat === 'image/jpeg' && (originalMime === 'image/png' || originalMime === 'image/webp')
-  const qualityDisabled = targetFormat === 'image/png'
-  const qualityHelper = qualityDisabled
-    ? 'PNG는 품질 슬라이더 영향이 작고, 주로 크기 조절이 용량에 더 크게 작용해요.'
-    : mode === 'optimize'
-      ? '용량을 많이 줄이고 싶다면 70~85%부터 비교해 보세요.'
-      : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다.'
 
   useEffect(() => {
     const onPopState = () => setPath(normalizePath(window.location.pathname))
@@ -308,16 +318,10 @@ function App() {
 
   useEffect(() => {
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl)
+      sourceItems.forEach((item) => URL.revokeObjectURL(item.previewUrl))
+      results.forEach((item) => URL.revokeObjectURL(item.url))
     }
-  }, [previewUrl])
-
-  useEffect(() => {
-    return () => {
-      if (resultUrl) URL.revokeObjectURL(resultUrl)
-      if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current)
-    }
-  }, [resultUrl])
+  }, [results, sourceItems])
 
   const navigate = (nextPath: string) => {
     const normalized = normalizePath(nextPath)
@@ -327,43 +331,60 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  const clearAllFiles = () => {
+    sourceItems.forEach((item) => URL.revokeObjectURL(item.previewUrl))
+    results.forEach((item) => URL.revokeObjectURL(item.url))
+    setSourceItems([])
+    setResults([])
+    setResizeWidth('')
+    setResizeHeight('')
+  }
+
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const nextFile = event.target.files?.[0]
-    if (!nextFile) return
+    const selected = Array.from(event.target.files ?? [])
+    if (!selected.length) return
 
-    const mimeType = mimeFromFile(nextFile)
-    if (!['image/png', 'image/jpeg', 'image/webp'].includes(mimeType)) {
-      setError('현재 MVP에서는 PNG, JPG, WEBP 파일만 지원합니다.')
-      return
-    }
-
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
-    if (resultUrl) URL.revokeObjectURL(resultUrl)
-    if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current)
-    setResult(null)
-    setResultUrl('')
+    clearAllFiles()
     setError('')
     setNotice('')
 
-    try {
-      const preview = URL.createObjectURL(nextFile)
-      setFile(nextFile)
-      setPreviewUrl(preview)
-      setTargetFormat(originalMimeToTarget(mimeType))
-      const img = await loadImage(nextFile)
-      setOriginalInfo({
-        width: img.naturalWidth,
-        height: img.naturalHeight,
-        sizeLabel: formatBytes(nextFile.size),
-        mimeType,
-        filename: nextFile.name,
-      })
-      setResizeWidth(String(img.naturalWidth))
-      setResizeHeight(String(img.naturalHeight))
-      setNotice('파일을 불러왔어요. 바로 변환하거나, 품질과 크기를 조정해보세요.')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '이미지 파일을 읽을 수 없습니다.')
+    const supported: SourceItem[] = []
+    const unsupportedNames: string[] = []
+
+    for (const file of selected) {
+      const mimeType = mimeFromFile(file)
+      if (!['image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/gif', 'image/svg+xml'].includes(mimeType)) {
+        unsupportedNames.push(file.name)
+        continue
+      }
+
+      try {
+        const previewUrl = URL.createObjectURL(file)
+        const img = await loadImage(file)
+        supported.push({
+          id: `${file.name}-${file.lastModified}-${file.size}`,
+          file,
+          previewUrl,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+          sizeLabel: formatBytes(file.size),
+          mimeType,
+        })
+      } catch {
+        unsupportedNames.push(file.name)
+      }
     }
+
+    if (supported.length) {
+      setSourceItems(supported)
+      setResizeWidth(String(supported[0].width))
+      setResizeHeight(String(supported[0].height))
+      setNotice(`${supported.length}개 파일을 불러왔습니다.${unsupportedNames.length ? ` 지원하지 않는 파일 ${unsupportedNames.length}개는 제외했습니다.` : ''}`)
+    } else {
+      setError('현재는 JPG, PNG, WEBP, BMP, GIF, SVG 파일만 지원합니다.')
+    }
+
+    if (event.target) event.target.value = ''
   }
 
   const applyPreset = (next: { mode: ToolMode; format: TargetFormat; quality: number; resizeEnabled?: boolean }) => {
@@ -371,86 +392,106 @@ function App() {
     setTargetFormat(next.format)
     setQuality(next.quality)
     setResizeEnabled(Boolean(next.resizeEnabled))
-    setNotice(`${mimeToLabel(next.format)} 기준 프리셋을 적용했어요.`)
+    setNotice(`${mimeToLabel(next.format)} 기준 프리셋을 적용했습니다.`)
   }
 
   const updateResizeWidth = (value: string) => {
     setResizeWidth(value)
-    if (!keepAspectRatio || !originalInfo) return
+    if (!keepAspectRatio || !firstSource) return
     const width = Number(value)
     if (!Number.isFinite(width) || width <= 0) return
-    const nextHeight = Math.max(1, Math.round((width / originalInfo.width) * originalInfo.height))
+    const nextHeight = Math.max(1, Math.round((width / firstSource.width) * firstSource.height))
     setResizeHeight(String(nextHeight))
   }
 
   const updateResizeHeight = (value: string) => {
     setResizeHeight(value)
-    if (!keepAspectRatio || !originalInfo) return
+    if (!keepAspectRatio || !firstSource) return
     const height = Number(value)
     if (!Number.isFinite(height) || height <= 0) return
-    const nextWidth = Math.max(1, Math.round((height / originalInfo.height) * originalInfo.width))
+    const nextWidth = Math.max(1, Math.round((height / firstSource.height) * firstSource.width))
     setResizeWidth(String(nextWidth))
   }
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!file || !originalInfo) {
+    if (!sourceItems.length) {
       setError('먼저 이미지 파일을 올려 주세요.')
       return
     }
 
     const parsedWidth = resizeEnabled && resizeWidth ? Number(resizeWidth) : undefined
     const parsedHeight = resizeEnabled && resizeHeight ? Number(resizeHeight) : undefined
-
     if (resizeEnabled && ((parsedWidth && parsedWidth <= 0) || (parsedHeight && parsedHeight <= 0))) {
-      setError('리사이즈 값은 1px 이상이어야 해요.')
+      setError('리사이즈 값은 1px 이상이어야 합니다.')
       return
     }
 
     setIsProcessing(true)
     setError('')
-    setNotice('')
+    setNotice('파일을 변환하고 있습니다...')
+    results.forEach((item) => URL.revokeObjectURL(item.url))
+    setResults([])
 
-    try {
-      const converted = await convertFile({
-        file,
-        targetFormat,
-        quality,
-        resizeWidth: parsedWidth,
-        resizeHeight: parsedHeight,
-      })
+    const nextResults: ConvertedItem[] = []
+    const failed: string[] = []
 
-      if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current)
-      if (resultUrl) URL.revokeObjectURL(resultUrl)
-
-      const objectUrl = URL.createObjectURL(converted.blob)
-      downloadUrlRef.current = objectUrl
-      setResultUrl(objectUrl)
-      const filename = `${fileNameWithoutExtension(file.name)}-converted.${mimeToExtension(targetFormat)}`
-
-      setResult({
-        blob: converted.blob,
-        filename,
-        sizeLabel: formatBytes(converted.blob.size),
-        mimeType: targetFormat,
-        width: converted.width,
-        height: converted.height,
-        reductionText: formatReduction(file.size, converted.blob.size),
-      })
-      setNotice('변환이 완료됐어요. 미리보기와 용량 변화를 확인한 뒤 다운로드하면 됩니다.')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '파일 처리 중 오류가 발생했습니다.')
-    } finally {
-      setIsProcessing(false)
+    for (const item of sourceItems) {
+      try {
+        const converted = await convertFile({
+          file: item.file,
+          targetFormat,
+          quality,
+          resizeWidth: parsedWidth,
+          resizeHeight: parsedHeight,
+        })
+        const url = URL.createObjectURL(converted.blob)
+        nextResults.push({
+          id: `${item.id}-${targetFormat}`,
+          sourceId: item.id,
+          filename: `${fileNameWithoutExtension(item.file.name)}-converted.${mimeToExtension(targetFormat)}`,
+          sizeLabel: formatBytes(converted.blob.size),
+          mimeType: targetFormat,
+          width: converted.width,
+          height: converted.height,
+          reductionText: formatReduction(item.file.size, converted.blob.size),
+          url,
+          blob: converted.blob,
+        })
+      } catch {
+        failed.push(item.file.name)
+      }
     }
+
+    setResults(nextResults)
+    if (failed.length) {
+      setNotice(`${nextResults.length}개 파일 변환 완료, ${failed.length}개 파일은 변환에 실패했습니다.`)
+    } else {
+      setNotice(`${nextResults.length}개 파일 변환이 완료되었습니다.`)
+    }
+    setIsProcessing(false)
   }
 
-  const downloadResult = () => {
-    if (!result || !downloadUrlRef.current) return
+  const downloadOne = (item: ConvertedItem) => {
     const a = document.createElement('a')
-    a.href = downloadUrlRef.current
-    a.download = result.filename
+    a.href = item.url
+    a.download = item.filename
     a.click()
+  }
+
+  const downloadAllAsZip = async () => {
+    if (!results.length) return
+    const zip = new JSZip()
+    results.forEach((item) => {
+      zip.file(item.filename, item.blob)
+    })
+    const zipBlob = await zip.generateAsync({ type: 'blob' })
+    const zipUrl = URL.createObjectURL(zipBlob)
+    const a = document.createElement('a')
+    a.href = zipUrl
+    a.download = 'image-convert-tool-hub-results.zip'
+    a.click()
+    URL.revokeObjectURL(zipUrl)
   }
 
   const renderWorkbench = (compact = false) => (
@@ -462,12 +503,12 @@ function App() {
               <div>
                 <p className="eyebrow">Quick convert</p>
                 <h1>이미지 변환 / 압축 도구</h1>
-                <p>파일을 올리고 바로 변환하실 수 있는 구조로 정리했습니다. 필요한 설명은 아래에 두고, 먼저 도구부터 사용할 수 있게 구성했습니다.</p>
+                <p>여러 이미지 파일을 한 번에 올리고, 필요한 형식으로 묶어서 변환하실 수 있습니다.</p>
               </div>
               <div className="proof-row compact-proof-row">
-                <span className="proof-chip">브라우저 처리 우선</span>
-                <span className="proof-chip">설치 없음</span>
-                <span className="proof-chip">다운로드 즉시 가능</span>
+                <span className="proof-chip">여러 파일 일괄 처리</span>
+                <span className="proof-chip">BMP / GIF / SVG 지원</span>
+                <span className="proof-chip">ZIP 다운로드</span>
               </div>
             </div>
           ) : (
@@ -475,7 +516,7 @@ function App() {
               <div>
                 <p className="eyebrow">Tool</p>
                 <h1>이미지 변환 / 압축 도구</h1>
-                <p>파일 이름만 바꾸는 가짜 변환이 아니라, 실제 새 파일을 만들어 내려받는 방식이에요.</p>
+                <p>여러 파일을 한 번에 변환하고, 결과를 ZIP으로 묶어 받으실 수 있습니다.</p>
               </div>
             </div>
           )}
@@ -483,24 +524,24 @@ function App() {
           <section className="preset-panel compact-preset-panel">
             <div className="preset-panel-head">
               <p className="eyebrow">빠른 작업</p>
-              <span>자주 쓰는 변환을 바로 고를 수 있어요</span>
+              <span>자주 쓰는 일괄 변환 작업을 바로 시작하실 수 있습니다.</span>
             </div>
             <div className="preset-grid">
               <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/jpeg', quality: 0.92 })}>
-                <strong>WEBP → JPG</strong>
+                <strong>여러 파일 → JPG</strong>
                 <span>호환성 우선 / 사진 공유용</span>
               </button>
               <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/png', quality: 1 })}>
-                <strong>JPG → PNG</strong>
-                <span>그래픽/배경 보존용</span>
+                <strong>여러 파일 → PNG</strong>
+                <span>그래픽/선명도 우선</span>
               </button>
               <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/webp', quality: 0.86 })}>
-                <strong>JPG → WEBP</strong>
+                <strong>여러 파일 → WEBP</strong>
                 <span>웹 업로드/용량 절약용</span>
               </button>
               <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'optimize', format: targetFormat, quality: 0.8, resizeEnabled: true })}>
-                <strong>용량 줄이기</strong>
-                <span>압축 + 리사이즈부터 바로 시작</span>
+                <strong>일괄 압축 / 리사이즈</strong>
+                <span>여러 파일을 한 번에 줄입니다</span>
               </button>
             </div>
           </section>
@@ -511,22 +552,20 @@ function App() {
                 포맷 변환
               </button>
               <button type="button" className={mode === 'optimize' ? 'segmented active' : 'segmented'} onClick={() => setMode('optimize')}>
-                압축/리사이즈
+                압축 / 리사이즈
               </button>
             </div>
 
             <label className="upload-box">
-              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleFileChange} hidden />
-              <strong>이미지 파일 업로드</strong>
-              <span>PNG, JPG, WEBP 파일을 올리면 브라우저 안에서 바로 처리합니다.</span>
+              <input type="file" multiple accept="image/png,image/jpeg,image/webp,image/bmp,image/gif,image/svg+xml,.png,.jpg,.jpeg,.webp,.bmp,.gif,.svg" onChange={handleFileChange} hidden />
+              <strong>여러 이미지 파일 업로드</strong>
+              <span>JPG, PNG, WEBP, BMP, GIF, SVG 파일을 여러 개 한 번에 올릴 수 있습니다.</span>
             </label>
 
-            {originalInfo ? (
+            {sourceItems.length ? (
               <div className="inline-info-card">
-                <strong>{originalInfo.filename}</strong>
-                <p>
-                  원본 형식 {originalLabel} · {originalInfo.width} × {originalInfo.height}px · {originalInfo.sizeLabel}
-                </p>
+                <strong>{sourceItems.length}개 파일 준비 완료</strong>
+                <p>입력 형식 예시: {[...new Set(sourceItems.map((item) => mimeToLabel(item.mimeType)))].join(', ')}</p>
               </div>
             ) : null}
 
@@ -551,14 +590,7 @@ function App() {
             {isTransparentToJpg ? (
               <div className="warning-box">
                 <strong>투명 배경 주의</strong>
-                <p>PNG/WEBP를 JPG로 바꾸면 투명 배경이 흰색으로 채워질 수 있어요.</p>
-              </div>
-            ) : null}
-
-            {originalMime === targetFormat ? (
-              <div className="helper-box">
-                <strong>같은 포맷으로 다시 저장</strong>
-                <p>지금 설정은 포맷 변경보다는 품질 조절이나 리사이즈 목적에 더 가깝습니다.</p>
+                <p>PNG, WEBP, GIF, SVG를 JPG로 바꾸면 투명 배경이 흰색으로 채워질 수 있습니다.</p>
               </div>
             ) : null}
 
@@ -590,59 +622,86 @@ function App() {
             {error ? <p className="error-text">{error}</p> : null}
 
             <div className="button-row">
-              <button type="submit" className="primary-button" disabled={!file || isProcessing}>
-                {isProcessing ? '처리 중...' : mode === 'convert' ? `${targetLabel}로 변환` : '압축/리사이즈 시작'}
+              <button type="submit" className="primary-button" disabled={!sourceItems.length || isProcessing}>
+                {isProcessing ? '일괄 처리 중...' : mode === 'convert' ? `${targetLabel}로 일괄 변환` : '일괄 압축 / 리사이즈 시작'}
               </button>
+              {sourceItems.length ? (
+                <button type="button" className="ghost-button" onClick={clearAllFiles}>
+                  파일 목록 비우기
+                </button>
+              ) : null}
             </div>
           </form>
         </section>
 
         <aside className="surface-card side-panel">
-          <h2>현재 파일 정보</h2>
-          {originalInfo ? (
+          <h2>작업 요약</h2>
+          {sourceItems.length ? (
             <ul className="bullet-list tight">
-              <li>원본 형식: {originalLabel}</li>
-              <li>크기: {originalInfo.width} × {originalInfo.height}px</li>
-              <li>원본 용량: {originalInfo.sizeLabel}</li>
+              <li>선택 파일 수: {sourceItems.length}개</li>
+              <li>첫 파일 형식: {originalLabel}</li>
               <li>출력 형식: {targetLabel}</li>
-              <li>처리 모드: {mode === 'convert' ? '포맷 변환' : '압축/리사이즈'}</li>
+              <li>처리 모드: {mode === 'convert' ? '포맷 변환' : '압축 / 리사이즈'}</li>
+              <li>지원 입력: JPG, PNG, WEBP, BMP, GIF, SVG</li>
             </ul>
           ) : (
-            <p>파일을 올리면 여기서 크기와 용량을 바로 볼 수 있어요.</p>
+            <p>여러 파일을 올리면 여기서 일괄 작업 요약을 확인하실 수 있습니다.</p>
           )}
 
-          {result ? (
+          {results.length ? (
             <div className="result-box">
               <strong>처리 완료</strong>
-              <p>출력 형식: {mimeToLabel(result.mimeType)}</p>
-              <p>결과 크기: {result.width} × {result.height}px</p>
-              <p>결과 용량: {result.sizeLabel}</p>
-              <p>원본 대비: {result.reductionText}</p>
-              <button type="button" className="secondary-button full-width" onClick={downloadResult}>
-                {result.filename} 다운로드
+              <p>완료 파일 수: {results.length}개</p>
+              <p>출력 형식: {mimeToLabel(results[0].mimeType)}</p>
+              <button type="button" className="secondary-button full-width" onClick={downloadAllAsZip}>
+                ZIP으로 전체 다운로드
               </button>
             </div>
           ) : null}
         </aside>
       </div>
 
-      {previewUrl ? (
+      {sourceItems.length ? (
         <section className="surface-card preview-panel">
           <div className="preview-header-row">
             <div>
               <p className="eyebrow">Preview</p>
-              <h2>변환 전 / 후 비교</h2>
+              <h2>선택 파일과 변환 결과 일부 미리보기</h2>
             </div>
           </div>
           <div className="preview-compare-grid">
             <div className="preview-card">
-              <strong>원본</strong>
-              <img className="preview-image" src={previewUrl} alt="업로드한 원본 미리보기" />
+              <strong>첫 번째 원본</strong>
+              <img className="preview-image" src={firstSource?.previewUrl} alt="첫 번째 원본 미리보기" />
             </div>
             <div className="preview-card">
-              <strong>{resultUrl ? '변환 결과' : '결과 미리보기 대기 중'}</strong>
-              {resultUrl ? <img className="preview-image" src={resultUrl} alt="변환 결과 미리보기" /> : <div className="preview-placeholder">변환 후 여기에 결과가 표시됩니다.</div>}
+              <strong>{firstResult ? '첫 번째 변환 결과' : '결과 미리보기 대기 중'}</strong>
+              {firstResult ? <img className="preview-image" src={firstResult.url} alt="첫 번째 변환 결과 미리보기" /> : <div className="preview-placeholder">일괄 변환 후 여기에 첫 번째 결과가 표시됩니다.</div>}
             </div>
+          </div>
+        </section>
+      ) : null}
+
+      {results.length ? (
+        <section className="surface-card preview-panel">
+          <div className="preview-header-row">
+            <div>
+              <p className="eyebrow">Results</p>
+              <h2>변환 결과 목록</h2>
+            </div>
+          </div>
+          <div className="results-list">
+            {results.map((item) => (
+              <article key={item.id} className="result-row">
+                <div>
+                  <strong>{item.filename}</strong>
+                  <p>{mimeToLabel(item.mimeType)} · {item.width} × {item.height}px · {item.sizeLabel} · {item.reductionText}</p>
+                </div>
+                <button type="button" className="secondary-button" onClick={() => downloadOne(item)}>
+                  개별 다운로드
+                </button>
+              </article>
+            ))}
           </div>
         </section>
       ) : null}
@@ -656,12 +715,12 @@ function App() {
           <div>
             <p className="workspace-label">image utility</p>
             <h1>이미지 변환 툴 허브</h1>
-            <p className="workspace-subtitle">들어오자마자 바로 변환을 시작하고, 필요한 설명은 아래에서 짧게 확인하실 수 있도록 툴 중심 구조로 정리했습니다.</p>
+            <p className="workspace-subtitle">여러 이미지 파일을 한 번에 올리고, 필요한 형식으로 묶어서 변환하실 수 있는 툴 중심 구조로 정리했습니다.</p>
           </div>
           <div className="workspace-mini-stats">
-            <span>WEBP / JPG / PNG</span>
-            <span>브라우저 처리 우선</span>
-            <span>변환 + 압축 + 리사이즈</span>
+            <span>JPG / PNG / WEBP</span>
+            <span>BMP / GIF / SVG</span>
+            <span>일괄 변환 / ZIP 다운로드</span>
           </div>
         </div>
         {renderWorkbench(true)}
@@ -672,10 +731,10 @@ function App() {
           <p className="card-kicker">지원 작업</p>
           <h3>지금 바로 많이 쓰는 이미지 작업</h3>
           <ul className="bullet-list tight">
-            <li>WEBP → JPG/PNG</li>
-            <li>JPG/PNG → WEBP</li>
-            <li>압축 품질 조절</li>
-            <li>비율 유지 리사이즈</li>
+            <li>여러 파일 일괄 변환</li>
+            <li>WEBP / JPG / PNG 상호 변환</li>
+            <li>BMP / GIF / SVG 입력 지원</li>
+            <li>압축 품질 조절 및 비율 유지 리사이즈</li>
           </ul>
         </article>
         <article className="surface-card dock-card">
@@ -706,7 +765,7 @@ function App() {
           <div>
             <p className="workspace-label">tool workspace</p>
             <h1>이미지 변환 작업화면</h1>
-            <p className="workspace-subtitle">파일 업로드 → 설정 확인 → 변환 → 비교 → 다운로드 흐름으로 바로 사용하실 수 있습니다.</p>
+            <p className="workspace-subtitle">여러 파일 업로드 → 설정 확인 → 일괄 변환 → 비교 → ZIP 다운로드 흐름으로 바로 사용하실 수 있습니다.</p>
           </div>
         </div>
         {renderWorkbench(false)}
@@ -725,7 +784,7 @@ function App() {
       <section className="page-stack">
         <article className="surface-card detail-header">
           <p className="eyebrow">Not Found</p>
-          <h1>페이지를 찾을 수 없어요</h1>
+          <h1>페이지를 찾을 수 없습니다</h1>
           <button type="button" className="primary-button" onClick={() => navigate('/')}>
             홈으로 돌아가기
           </button>
