@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
 import JSZip from 'jszip'
+import heic2any from 'heic2any'
+import { decompressFrames, parseGIF } from 'gifuct-js'
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist'
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import './App.css'
 import { guides, siteInfo, staticPages, type Guide } from './siteContent'
 
 type ToolMode = 'convert' | 'optimize'
 type TargetFormat = 'image/jpeg' | 'image/png' | 'image/webp'
+
+GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
 type SourceItem = {
   id: string
@@ -14,6 +20,10 @@ type SourceItem = {
   height: number
   sizeLabel: string
   mimeType: string
+  pageCount?: number
+  animated?: boolean
+  note?: string
+  workingBlob?: Blob
 }
 
 type ConvertedItem = {
@@ -88,7 +98,10 @@ function mimeFromFile(file: File) {
     file.type === 'image/webp' ||
     file.type === 'image/bmp' ||
     file.type === 'image/gif' ||
-    file.type === 'image/svg+xml'
+    file.type === 'image/svg+xml' ||
+    file.type === 'image/heic' ||
+    file.type === 'image/heif' ||
+    file.type === 'application/pdf'
   ) {
     return file.type
   }
@@ -100,6 +113,9 @@ function mimeFromFile(file: File) {
   if (lower.endsWith('.bmp')) return 'image/bmp'
   if (lower.endsWith('.gif')) return 'image/gif'
   if (lower.endsWith('.svg')) return 'image/svg+xml'
+  if (lower.endsWith('.heic')) return 'image/heic'
+  if (lower.endsWith('.heif')) return 'image/heif'
+  if (lower.endsWith('.pdf')) return 'application/pdf'
   return 'application/octet-stream'
 }
 
@@ -114,8 +130,8 @@ function formatReduction(before: number, after: number) {
   return diff < 0 ? `${Math.abs(diff)}% 감소` : `${diff}% 증가`
 }
 
-async function loadImage(file: File) {
-  const objectUrl = URL.createObjectURL(file)
+async function loadImageFromBlob(blob: Blob) {
+  const objectUrl = URL.createObjectURL(blob)
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const el = new Image()
@@ -129,14 +145,106 @@ async function loadImage(file: File) {
   }
 }
 
+async function renderPdfPageToPngBlob(file: File, pageNumber = 1) {
+  const pdf = await getDocument({ data: await file.arrayBuffer() }).promise
+  const page = await pdf.getPage(pageNumber)
+  const viewport = page.getViewport({ scale: 1.5 })
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.ceil(viewport.width)
+  canvas.height = Math.ceil(viewport.height)
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('PDF 렌더링을 지원하지 않습니다.')
+  await page.render({ canvasContext: ctx, viewport }).promise
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png', 1))
+  if (!blob) throw new Error('PDF 미리보기를 만들지 못했습니다.')
+  return { blob, pageCount: pdf.numPages, width: canvas.width, height: canvas.height }
+}
+
+async function prepareSourceItem(file: File): Promise<SourceItem> {
+  const mimeType = mimeFromFile(file)
+  const id = `${file.name}-${file.lastModified}-${file.size}`
+
+  if (mimeType === 'image/heic' || mimeType === 'image/heif') {
+    const converted = await heic2any({ blob: file, toType: 'image/png' })
+    const blob = Array.isArray(converted) ? converted[0] : converted
+    const previewUrl = URL.createObjectURL(blob)
+    const image = await loadImageFromBlob(blob)
+    return {
+      id,
+      file,
+      previewUrl,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      sizeLabel: formatBytes(file.size),
+      mimeType,
+      workingBlob: blob,
+      note: 'HEIC/HEIF 파일은 브라우저 호환성을 위해 먼저 PNG로 변환해 처리합니다.',
+    }
+  }
+
+  if (mimeType === 'application/pdf') {
+    const rendered = await renderPdfPageToPngBlob(file, 1)
+    const previewUrl = URL.createObjectURL(rendered.blob)
+    return {
+      id,
+      file,
+      previewUrl,
+      width: rendered.width,
+      height: rendered.height,
+      sizeLabel: formatBytes(file.size),
+      mimeType,
+      pageCount: rendered.pageCount,
+      note: rendered.pageCount > 1 ? `PDF ${rendered.pageCount}페이지를 이미지로 순서대로 변환합니다.` : 'PDF 1페이지를 이미지로 변환합니다.',
+    }
+  }
+
+  if (mimeType === 'image/gif') {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    const parsed = parseGIF(bytes)
+    const frames = decompressFrames(parsed, false)
+    const previewUrl = URL.createObjectURL(file)
+    const image = await loadImageFromBlob(file)
+    return {
+      id,
+      file,
+      previewUrl,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      sizeLabel: formatBytes(file.size),
+      mimeType,
+      animated: frames.length > 1,
+      note: frames.length > 1 ? '애니메이션 GIF는 현재 첫 프레임 기준으로 변환합니다.' : undefined,
+    }
+  }
+
+  const previewUrl = URL.createObjectURL(file)
+  const image = await loadImageFromBlob(file)
+  return {
+    id,
+    file,
+    previewUrl,
+    width: image.naturalWidth,
+    height: image.naturalHeight,
+    sizeLabel: formatBytes(file.size),
+    mimeType,
+  }
+}
+
 async function convertFile(options: {
-  file: File
+  source: SourceItem
   targetFormat: TargetFormat
   quality: number
   resizeWidth?: number
   resizeHeight?: number
+  pdfPageNumber?: number
 }) {
-  const image = await loadImage(options.file)
+  let inputBlob: Blob = options.source.workingBlob ?? options.source.file
+  if (options.source.mimeType === 'application/pdf') {
+    const rendered = await renderPdfPageToPngBlob(options.source.file, options.pdfPageNumber ?? 1)
+    inputBlob = rendered.blob
+  }
+
+  const image = await loadImageFromBlob(inputBlob)
   const width = options.resizeWidth || image.naturalWidth
   const height = options.resizeHeight || image.naturalHeight
 
@@ -274,7 +382,7 @@ function App() {
     ? 'PNG는 품질 슬라이더 영향이 작고, 주로 크기 조절이 용량에 더 크게 작용합니다.'
     : mode === 'optimize'
       ? '용량을 많이 줄이고 싶다면 70~85%부터 비교해 보시는 것을 권장합니다.'
-      : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다.'
+      : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다. HEIC와 PDF는 내부적으로 이미지로 변환한 뒤 출력합니다.'
 
   const seoMeta = useMemo(() => {
     if (currentGuide) return { title: `${currentGuide.title} | ${siteInfo.name}`, description: currentGuide.description }
@@ -353,23 +461,13 @@ function App() {
 
     for (const file of selected) {
       const mimeType = mimeFromFile(file)
-      if (!['image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/gif', 'image/svg+xml'].includes(mimeType)) {
+      if (!['image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/gif', 'image/svg+xml', 'image/heic', 'image/heif', 'application/pdf'].includes(mimeType)) {
         unsupportedNames.push(file.name)
         continue
       }
 
       try {
-        const previewUrl = URL.createObjectURL(file)
-        const img = await loadImage(file)
-        supported.push({
-          id: `${file.name}-${file.lastModified}-${file.size}`,
-          file,
-          previewUrl,
-          width: img.naturalWidth,
-          height: img.naturalHeight,
-          sizeLabel: formatBytes(file.size),
-          mimeType,
-        })
+        supported.push(await prepareSourceItem(file))
       } catch {
         unsupportedNames.push(file.name)
       }
@@ -438,26 +536,53 @@ function App() {
 
     for (const item of sourceItems) {
       try {
-        const converted = await convertFile({
-          file: item.file,
-          targetFormat,
-          quality,
-          resizeWidth: parsedWidth,
-          resizeHeight: parsedHeight,
-        })
-        const url = URL.createObjectURL(converted.blob)
-        nextResults.push({
-          id: `${item.id}-${targetFormat}`,
-          sourceId: item.id,
-          filename: `${fileNameWithoutExtension(item.file.name)}-converted.${mimeToExtension(targetFormat)}`,
-          sizeLabel: formatBytes(converted.blob.size),
-          mimeType: targetFormat,
-          width: converted.width,
-          height: converted.height,
-          reductionText: formatReduction(item.file.size, converted.blob.size),
-          url,
-          blob: converted.blob,
-        })
+        if (item.mimeType === 'application/pdf') {
+          const totalPages = item.pageCount ?? 1
+          for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+            const converted = await convertFile({
+              source: item,
+              targetFormat,
+              quality,
+              resizeWidth: parsedWidth,
+              resizeHeight: parsedHeight,
+              pdfPageNumber: pageNumber,
+            })
+            const url = URL.createObjectURL(converted.blob)
+            nextResults.push({
+              id: `${item.id}-${targetFormat}-p${pageNumber}`,
+              sourceId: item.id,
+              filename: `${fileNameWithoutExtension(item.file.name)}-page-${pageNumber}.${mimeToExtension(targetFormat)}`,
+              sizeLabel: formatBytes(converted.blob.size),
+              mimeType: targetFormat,
+              width: converted.width,
+              height: converted.height,
+              reductionText: formatReduction(item.file.size, converted.blob.size),
+              url,
+              blob: converted.blob,
+            })
+          }
+        } else {
+          const converted = await convertFile({
+            source: item,
+            targetFormat,
+            quality,
+            resizeWidth: parsedWidth,
+            resizeHeight: parsedHeight,
+          })
+          const url = URL.createObjectURL(converted.blob)
+          nextResults.push({
+            id: `${item.id}-${targetFormat}`,
+            sourceId: item.id,
+            filename: `${fileNameWithoutExtension(item.file.name)}-converted.${mimeToExtension(targetFormat)}`,
+            sizeLabel: formatBytes(converted.blob.size),
+            mimeType: targetFormat,
+            width: converted.width,
+            height: converted.height,
+            reductionText: formatReduction(item.file.size, converted.blob.size),
+            url,
+            blob: converted.blob,
+          })
+        }
       } catch {
         failed.push(item.file.name)
       }
@@ -559,13 +684,26 @@ function App() {
             <label className="upload-box">
               <input type="file" multiple accept="image/png,image/jpeg,image/webp,image/bmp,image/gif,image/svg+xml,.png,.jpg,.jpeg,.webp,.bmp,.gif,.svg" onChange={handleFileChange} hidden />
               <strong>여러 이미지 파일 업로드</strong>
-              <span>JPG, PNG, WEBP, BMP, GIF, SVG 파일을 여러 개 한 번에 올릴 수 있습니다.</span>
+              <span>JPG, PNG, WEBP, BMP, GIF, SVG, HEIC, PDF 파일을 여러 개 한 번에 올릴 수 있습니다.</span>
             </label>
 
             {sourceItems.length ? (
               <div className="inline-info-card">
                 <strong>{sourceItems.length}개 파일 준비 완료</strong>
                 <p>입력 형식 예시: {[...new Set(sourceItems.map((item) => mimeToLabel(item.mimeType)))].join(', ')}</p>
+                <div className="source-note-list">
+                  {sourceItems.slice(0, 4).map((item) => (
+                    <div key={item.id} className="source-note-item">
+                      <strong>{item.file.name}</strong>
+                      <span>
+                        {mimeToLabel(item.mimeType)} · {item.sizeLabel}
+                        {item.pageCount ? ` · ${item.pageCount}페이지` : ''}
+                        {item.animated ? ' · 애니메이션 감지' : ''}
+                      </span>
+                      {item.note ? <small>{item.note}</small> : null}
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
 
@@ -591,6 +729,13 @@ function App() {
               <div className="warning-box">
                 <strong>투명 배경 주의</strong>
                 <p>PNG, WEBP, GIF, SVG를 JPG로 바꾸면 투명 배경이 흰색으로 채워질 수 있습니다.</p>
+              </div>
+            ) : null}
+
+            {sourceItems.some((item) => item.animated) ? (
+              <div className="warning-box">
+                <strong>애니메이션 GIF 안내</strong>
+                <p>애니메이션 GIF는 현재 첫 프레임 기준으로 변환합니다. 전체 애니메이션 보존 변환은 다음 단계에서 추가할 예정입니다.</p>
               </div>
             ) : null}
 
@@ -642,7 +787,7 @@ function App() {
               <li>첫 파일 형식: {originalLabel}</li>
               <li>출력 형식: {targetLabel}</li>
               <li>처리 모드: {mode === 'convert' ? '포맷 변환' : '압축 / 리사이즈'}</li>
-              <li>지원 입력: JPG, PNG, WEBP, BMP, GIF, SVG</li>
+              <li>지원 입력: JPG, PNG, WEBP, BMP, GIF, SVG, HEIC, PDF</li>
             </ul>
           ) : (
             <p>여러 파일을 올리면 여기서 일괄 작업 요약을 확인하실 수 있습니다.</p>

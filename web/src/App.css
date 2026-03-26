@@ -366,6 +366,25 @@ button {
   border-radius: 18px;
 }
 
+.source-note-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.source-note-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.source-note-item span,
+.source-note-item small {
+  color: var(--muted);
+}
+
 .inline-info-card {
   background: rgba(124, 156, 255, 0.08);
 }
