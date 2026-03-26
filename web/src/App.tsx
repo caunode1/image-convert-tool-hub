@@ -462,7 +462,7 @@ function App() {
               <div>
                 <p className="eyebrow">Quick convert</p>
                 <h1>이미지 변환 / 압축 도구</h1>
-                <p>바로 파일 올리고 변환하면 되는 구조로 잡았어. 설명은 아래에 있고, 먼저 도구부터 쓸 수 있게 만들었어.</p>
+                <p>파일을 올리고 바로 변환하실 수 있는 구조로 정리했습니다. 필요한 설명은 아래에 두고, 먼저 도구부터 사용할 수 있게 구성했습니다.</p>
               </div>
               <div className="proof-row compact-proof-row">
                 <span className="proof-chip">브라우저 처리 우선</span>
@@ -656,7 +656,7 @@ function App() {
           <div>
             <p className="workspace-label">image utility</p>
             <h1>이미지 변환 툴 허브</h1>
-            <p className="workspace-subtitle">들어오자마자 바로 변환하고, 필요한 설명은 아래에서 짧게 확인하는 툴 중심 구조로 바꿨어.</p>
+            <p className="workspace-subtitle">들어오자마자 바로 변환을 시작하고, 필요한 설명은 아래에서 짧게 확인하실 수 있도록 툴 중심 구조로 정리했습니다.</p>
           </div>
           <div className="workspace-mini-stats">
             <span>WEBP / JPG / PNG</span>
@@ -681,7 +681,7 @@ function App() {
         <article className="surface-card dock-card">
           <p className="card-kicker">처리 원칙</p>
           <h3>가급적 브라우저 안에서 끝내는 방향</h3>
-          <p>설치 없이 바로 쓰고, 업로드 파일을 장기 보관하지 않는 방향으로 설계하고 있어. 민감한 파일은 올리기 전에 한 번 더 확인하면 돼.</p>
+          <p>설치 없이 바로 사용하실 수 있고, 업로드 파일을 장기 보관하지 않는 방향으로 설계하고 있습니다. 민감한 파일은 업로드 전에 한 번 더 확인해 주세요.</p>
         </article>
         <article className="surface-card dock-card guide-dock-card">
           <p className="card-kicker">가이드</p>
@@ -706,7 +706,7 @@ function App() {
           <div>
             <p className="workspace-label">tool workspace</p>
             <h1>이미지 변환 작업화면</h1>
-            <p className="workspace-subtitle">파일 업로드 → 설정 확인 → 변환 → 비교 → 다운로드 흐름으로 바로 쓰면 돼.</p>
+            <p className="workspace-subtitle">파일 업로드 → 설정 확인 → 변환 → 비교 → 다운로드 흐름으로 바로 사용하실 수 있습니다.</p>
           </div>
         </div>
         {renderWorkbench(false)}
