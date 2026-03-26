@@ -10,6 +10,72 @@ import { guides, siteInfo, staticPages, type Guide } from './siteContent'
 type ToolMode = 'convert' | 'optimize'
 type TargetFormat = 'image/jpeg' | 'image/png' | 'image/webp'
 
+const SUPPORTED_INPUT_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/bmp',
+  'image/gif',
+  'image/svg+xml',
+  'image/heic',
+  'image/heif',
+  'application/pdf',
+  'image/tiff',
+  'image/vnd.adobe.photoshop',
+] as const
+
+const FILE_INPUT_ACCEPT = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/bmp',
+  'image/gif',
+  'image/svg+xml',
+  'image/heic',
+  'image/heif',
+  'application/pdf',
+  'image/tiff',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.bmp',
+  '.gif',
+  '.svg',
+  '.heic',
+  '.heif',
+  '.pdf',
+  '.tif',
+  '.tiff',
+  '.psd',
+].join(',')
+
+const SUPPORTED_INPUT_COPY = 'JPG, PNG, WEBP, BMP, GIF, SVG, HEIC/HEIF, PDF, TIFF, PSD'
+const RAW_INPUT_COPY = 'RAW(NEF/CR2/ARW/DNG 등)는 아직 미지원'
+
+const RAW_FILE_EXTENSIONS = new Set([
+  '.3fr',
+  '.arw',
+  '.cr2',
+  '.cr3',
+  '.dng',
+  '.erf',
+  '.iiq',
+  '.kdc',
+  '.mrw',
+  '.nef',
+  '.nrw',
+  '.orf',
+  '.pef',
+  '.raf',
+  '.raw',
+  '.rw2',
+  '.sr2',
+  '.srf',
+  '.srw',
+  '.x3f',
+])
+
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
 type SourceItem = {
@@ -82,6 +148,11 @@ function mimeToLabel(mime: TargetFormat | string) {
   if (mime === 'image/bmp') return 'BMP'
   if (mime === 'image/gif') return 'GIF'
   if (mime === 'image/svg+xml') return 'SVG'
+  if (mime === 'image/heic') return 'HEIC'
+  if (mime === 'image/heif') return 'HEIF'
+  if (mime === 'application/pdf') return 'PDF'
+  if (mime === 'image/tiff') return 'TIFF'
+  if (mime === 'image/vnd.adobe.photoshop') return 'PSD'
   return mime.replace('image/', '').toUpperCase()
 }
 
@@ -91,31 +162,44 @@ function mimeToExtension(mime: TargetFormat) {
   return 'webp'
 }
 
-function mimeFromFile(file: File) {
-  if (
-    file.type === 'image/png' ||
-    file.type === 'image/jpeg' ||
-    file.type === 'image/webp' ||
-    file.type === 'image/bmp' ||
-    file.type === 'image/gif' ||
-    file.type === 'image/svg+xml' ||
-    file.type === 'image/heic' ||
-    file.type === 'image/heif' ||
-    file.type === 'application/pdf'
-  ) {
-    return file.type
-  }
+function fileExtension(name: string) {
+  const match = name.toLowerCase().match(/\.[^/.]+$/)
+  return match?.[0] ?? ''
+}
 
-  const lower = file.name.toLowerCase()
-  if (lower.endsWith('.png')) return 'image/png'
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
-  if (lower.endsWith('.webp')) return 'image/webp'
-  if (lower.endsWith('.bmp')) return 'image/bmp'
-  if (lower.endsWith('.gif')) return 'image/gif'
-  if (lower.endsWith('.svg')) return 'image/svg+xml'
-  if (lower.endsWith('.heic')) return 'image/heic'
-  if (lower.endsWith('.heif')) return 'image/heif'
-  if (lower.endsWith('.pdf')) return 'application/pdf'
+function normalizeIncomingMime(type: string) {
+  if (type === 'image/jpg') return 'image/jpeg'
+  if (type === 'image/tif') return 'image/tiff'
+  if (type === 'application/vnd.adobe.photoshop' || type === 'application/x-photoshop' || type === 'image/x-photoshop') {
+    return 'image/vnd.adobe.photoshop'
+  }
+  return type
+}
+
+function isSupportedInputMime(mime: string): mime is (typeof SUPPORTED_INPUT_MIME_TYPES)[number] {
+  return SUPPORTED_INPUT_MIME_TYPES.includes(mime as (typeof SUPPORTED_INPUT_MIME_TYPES)[number])
+}
+
+function isRawFile(file: File) {
+  return RAW_FILE_EXTENSIONS.has(fileExtension(file.name))
+}
+
+function mimeFromFile(file: File) {
+  const normalizedType = normalizeIncomingMime(file.type)
+  if (isSupportedInputMime(normalizedType)) return normalizedType
+
+  const extension = fileExtension(file.name)
+  if (extension === '.png') return 'image/png'
+  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg'
+  if (extension === '.webp') return 'image/webp'
+  if (extension === '.bmp') return 'image/bmp'
+  if (extension === '.gif') return 'image/gif'
+  if (extension === '.svg') return 'image/svg+xml'
+  if (extension === '.heic') return 'image/heic'
+  if (extension === '.heif') return 'image/heif'
+  if (extension === '.pdf') return 'application/pdf'
+  if (extension === '.tif' || extension === '.tiff') return 'image/tiff'
+  if (extension === '.psd') return 'image/vnd.adobe.photoshop'
   return 'application/octet-stream'
 }
 
@@ -145,6 +229,25 @@ async function loadImageFromBlob(blob: Blob) {
   }
 }
 
+async function canvasToPngBlob(canvas: HTMLCanvasElement) {
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png', 1))
+  if (!blob) throw new Error('이미지 미리보기를 만들지 못했습니다.')
+  return blob
+}
+
+async function rgbaToPngBlob(rgba: Uint8Array, width: number, height: number) {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('브라우저에서 TIFF 처리를 지원하지 않습니다.')
+
+  const data = new Uint8ClampedArray(rgba.byteLength)
+  data.set(rgba)
+  ctx.putImageData(new ImageData(data, width, height), 0, 0)
+  return canvasToPngBlob(canvas)
+}
+
 async function renderPdfPageToPngBlob(file: File, pageNumber = 1) {
   const pdf = await getDocument({ data: await file.arrayBuffer() }).promise
   const page = await pdf.getPage(pageNumber)
@@ -158,6 +261,52 @@ async function renderPdfPageToPngBlob(file: File, pageNumber = 1) {
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png', 1))
   if (!blob) throw new Error('PDF 미리보기를 만들지 못했습니다.')
   return { blob, pageCount: pdf.numPages, width: canvas.width, height: canvas.height }
+}
+
+async function renderTiffToPngBlob(file: File) {
+  const { default: UTIF } = await import('utif')
+  const buffer = await file.arrayBuffer()
+  const ifds = UTIF.decode(buffer) as Array<Record<string, unknown>>
+  const candidates = ifds
+    .map((ifd) => {
+      const width = Number(ifd.width ?? (Array.isArray(ifd.t256) ? ifd.t256[0] : ifd.t256) ?? 0)
+      const height = Number(ifd.height ?? (Array.isArray(ifd.t257) ? ifd.t257[0] : ifd.t257) ?? 0)
+      return { ifd, width, height, area: width * height }
+    })
+    .filter((item) => item.width > 0 && item.height > 0)
+    .sort((a, b) => b.area - a.area)
+
+  const target = candidates[0]
+  if (!target) throw new Error('TIFF 이미지를 읽지 못했습니다.')
+
+  UTIF.decodeImage(buffer, target.ifd)
+  const rgba = UTIF.toRGBA8(target.ifd) as Uint8Array
+  const blob = await rgbaToPngBlob(rgba, target.width, target.height)
+
+  return {
+    blob,
+    width: target.width,
+    height: target.height,
+    pageCount: candidates.length,
+  }
+}
+
+async function renderPsdToPngBlob(file: File) {
+  const { readPsd } = await import('ag-psd')
+  const psd = readPsd(await file.arrayBuffer(), { skipLayerImageData: true, skipThumbnail: true })
+
+  if (psd.bitsPerChannel && psd.bitsPerChannel !== 8) {
+    throw new Error('16비트 이상 PSD는 아직 지원하지 않습니다.')
+  }
+
+  const canvas = psd.canvas as HTMLCanvasElement | undefined
+  if (!canvas) throw new Error('PSD 합성 미리보기가 없는 파일입니다.')
+
+  return {
+    blob: await canvasToPngBlob(canvas),
+    width: psd.width ?? canvas.width,
+    height: psd.height ?? canvas.height,
+  }
 }
 
 async function prepareSourceItem(file: File): Promise<SourceItem> {
@@ -195,6 +344,39 @@ async function prepareSourceItem(file: File): Promise<SourceItem> {
       mimeType,
       pageCount: rendered.pageCount,
       note: rendered.pageCount > 1 ? `PDF ${rendered.pageCount}페이지를 이미지로 순서대로 변환합니다.` : 'PDF 1페이지를 이미지로 변환합니다.',
+    }
+  }
+
+  if (mimeType === 'image/tiff') {
+    const rendered = await renderTiffToPngBlob(file)
+    const previewUrl = URL.createObjectURL(rendered.blob)
+    return {
+      id,
+      file,
+      previewUrl,
+      width: rendered.width,
+      height: rendered.height,
+      sizeLabel: formatBytes(file.size),
+      mimeType,
+      pageCount: rendered.pageCount,
+      workingBlob: rendered.blob,
+      note: rendered.pageCount > 1 ? 'TIFF는 가장 큰 페이지 1장 기준으로 변환합니다.' : 'TIFF 파일을 브라우저용 이미지로 읽어 변환합니다.',
+    }
+  }
+
+  if (mimeType === 'image/vnd.adobe.photoshop') {
+    const rendered = await renderPsdToPngBlob(file)
+    const previewUrl = URL.createObjectURL(rendered.blob)
+    return {
+      id,
+      file,
+      previewUrl,
+      width: rendered.width,
+      height: rendered.height,
+      sizeLabel: formatBytes(file.size),
+      mimeType,
+      workingBlob: rendered.blob,
+      note: 'PSD는 합성 미리보기 기준으로 변환합니다. 일부 특수 PSD는 제외될 수 있습니다.',
     }
   }
 
@@ -375,13 +557,13 @@ function App() {
   const originalMime = firstSource?.mimeType ?? ''
   const targetLabel = mimeToLabel(targetFormat)
   const originalLabel = originalMime ? mimeToLabel(originalMime) : '알 수 없음'
-  const isTransparentToJpg = targetFormat === 'image/jpeg' && (originalMime === 'image/png' || originalMime === 'image/webp' || originalMime === 'image/gif' || originalMime === 'image/svg+xml')
+  const isTransparentToJpg = targetFormat === 'image/jpeg' && (originalMime === 'image/png' || originalMime === 'image/webp' || originalMime === 'image/gif' || originalMime === 'image/svg+xml' || originalMime === 'image/tiff' || originalMime === 'image/vnd.adobe.photoshop')
   const qualityDisabled = targetFormat === 'image/png'
   const qualityHelper = qualityDisabled
     ? 'PNG는 품질 슬라이더 영향이 작고, 주로 크기 조절이 용량에 더 크게 작용합니다.'
     : mode === 'optimize'
       ? '용량을 많이 줄이고 싶다면 70~85%부터 비교해 보시는 것을 권장합니다.'
-      : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다. HEIC와 PDF는 내부적으로 이미지로 변환한 뒤 출력합니다.'
+      : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다. HEIC, PDF, TIFF, PSD는 내부적으로 브라우저용 이미지로 바꾼 뒤 출력합니다.'
 
   const seoMeta = useMemo(() => {
     if (currentGuide) return { title: `${currentGuide.title} | ${siteInfo.name}`, description: currentGuide.description }
@@ -457,18 +639,21 @@ function App() {
 
     const supported: SourceItem[] = []
     const unsupportedNames: string[] = []
+    const rawNames: string[] = []
+    const unreadableNames: string[] = []
 
     for (const file of selected) {
       const mimeType = mimeFromFile(file)
-      if (!['image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/gif', 'image/svg+xml', 'image/heic', 'image/heif', 'application/pdf'].includes(mimeType)) {
-        unsupportedNames.push(file.name)
+      if (!isSupportedInputMime(mimeType)) {
+        if (isRawFile(file)) rawNames.push(file.name)
+        else unsupportedNames.push(file.name)
         continue
       }
 
       try {
         supported.push(await prepareSourceItem(file))
       } catch {
-        unsupportedNames.push(file.name)
+        unreadableNames.push(file.name)
       }
     }
 
@@ -476,9 +661,18 @@ function App() {
       setSourceItems(supported)
       setResizeWidth(String(supported[0].width))
       setResizeHeight(String(supported[0].height))
-      setNotice(`${supported.length}개 파일을 불러왔습니다.${unsupportedNames.length ? ` 지원하지 않는 파일 ${unsupportedNames.length}개는 제외했습니다.` : ''}`)
+
+      const excludedMessages = [
+        rawNames.length ? `RAW ${rawNames.length}개는 아직 지원하지 않아 제외했습니다.` : '',
+        unsupportedNames.length ? `미지원 파일 ${unsupportedNames.length}개는 제외했습니다.` : '',
+        unreadableNames.length ? `읽지 못한 파일 ${unreadableNames.length}개는 제외했습니다.` : '',
+      ].filter(Boolean)
+
+      setNotice(`${supported.length}개 파일을 불러왔습니다.${excludedMessages.length ? ` ${excludedMessages.join(' ')}` : ''}`)
+    } else if (rawNames.length && !unsupportedNames.length && !unreadableNames.length) {
+      setError('RAW 파일은 아직 지원하지 않습니다. 브라우저 버전에서는 TIFF·PSD까지 우선 지원하고, NEF/CR2/ARW/DNG 등은 다음 단계 검토 대상입니다.')
     } else {
-      setError('현재는 JPG, PNG, WEBP, BMP, GIF, SVG, HEIC/HEIF, PDF 파일을 지원합니다.')
+      setError(`현재는 ${SUPPORTED_INPUT_COPY} 파일을 지원합니다.`)
     }
 
     if (event.target) event.target.value = ''
@@ -631,7 +825,7 @@ function App() {
               </div>
               <div className="proof-row compact-proof-row">
                 <span className="proof-chip">여러 파일 일괄 처리</span>
-                <span className="proof-chip">BMP / GIF / SVG / HEIC / PDF 지원</span>
+                <span className="proof-chip">BMP / GIF / SVG / HEIC / PDF / TIFF / PSD 지원</span>
                 <span className="proof-chip">ZIP 다운로드</span>
               </div>
             </div>
@@ -681,9 +875,9 @@ function App() {
             </div>
 
             <label className="upload-box">
-              <input type="file" multiple accept="image/png,image/jpeg,image/webp,image/bmp,image/gif,image/svg+xml,image/heic,image/heif,application/pdf,.png,.jpg,.jpeg,.webp,.bmp,.gif,.svg,.heic,.heif,.pdf" onChange={handleFileChange} hidden />
+              <input type="file" multiple accept={FILE_INPUT_ACCEPT} onChange={handleFileChange} hidden />
               <strong>여러 이미지 파일 업로드</strong>
-              <span>JPG, PNG, WEBP, BMP, GIF, SVG, HEIC, PDF 파일을 여러 개 한 번에 올릴 수 있습니다.</span>
+              <span>{SUPPORTED_INPUT_COPY} 파일을 여러 개 한 번에 올릴 수 있습니다. {RAW_INPUT_COPY}</span>
             </label>
 
             {sourceItems.length ? (
@@ -727,7 +921,7 @@ function App() {
             {isTransparentToJpg ? (
               <div className="warning-box">
                 <strong>투명 배경 주의</strong>
-                <p>PNG, WEBP, GIF, SVG를 JPG로 바꾸면 투명 배경이 흰색으로 채워질 수 있습니다.</p>
+                <p>PNG, WEBP, GIF, SVG, PSD, 일부 TIFF를 JPG로 바꾸면 투명 배경이 흰색으로 채워질 수 있습니다.</p>
               </div>
             ) : null}
 
@@ -786,7 +980,8 @@ function App() {
               <li>첫 파일 형식: {originalLabel}</li>
               <li>출력 형식: {targetLabel}</li>
               <li>처리 모드: {mode === 'convert' ? '포맷 변환' : '압축 / 리사이즈'}</li>
-              <li>지원 입력: JPG, PNG, WEBP, BMP, GIF, SVG, HEIC, PDF</li>
+              <li>지원 입력: {SUPPORTED_INPUT_COPY}</li>
+              <li>{RAW_INPUT_COPY}</li>
             </ul>
           ) : (
             <p>여러 파일을 올리면 여기서 일괄 작업 요약을 확인하실 수 있습니다.</p>
@@ -863,7 +1058,7 @@ function App() {
           </div>
           <div className="workspace-mini-stats">
             <span>JPG / PNG / WEBP</span>
-            <span>BMP / GIF / SVG / HEIC / PDF</span>
+            <span>BMP / GIF / SVG / HEIC / PDF / TIFF / PSD</span>
             <span>일괄 변환 / ZIP 다운로드</span>
           </div>
         </div>
@@ -877,7 +1072,7 @@ function App() {
           <ul className="bullet-list tight">
             <li>여러 파일 일괄 변환</li>
             <li>WEBP / JPG / PNG 상호 변환</li>
-            <li>BMP / GIF / SVG / HEIC / HEIF / PDF 입력 지원</li>
+            <li>BMP / GIF / SVG / HEIC / HEIF / PDF / TIFF / PSD 입력 지원</li>
             <li>압축 품질 조절 및 비율 유지 리사이즈</li>
           </ul>
         </article>

@@ -29,7 +29,7 @@ export const siteInfo = {
   shortName: 'Image Convert Tool Hub',
   siteUrl: 'https://image-convert-tool-hub.pages.dev',
   description:
-    'WEBP, JPG, PNG 이미지를 브라우저 안에서 바로 변환하고 압축·리사이즈까지 할 수 있는 실용형 이미지 툴 사이트입니다.',
+    'WEBP, JPG, PNG 출력 변환은 물론 TIFF·PSD·HEIC·PDF 같은 입력도 브라우저 안에서 정리할 수 있는 실용형 이미지 툴 사이트입니다.',
   contactEmail: 'sjung0328@gmail.com',
 } as const
 
@@ -39,8 +39,8 @@ export const toolHighlights = [
     text: '가능한 한 브라우저 안에서 처리해서 업로드 파일을 따로 저장하지 않는 방향으로 설계합니다.',
   },
   {
-    title: '자주 쓰는 포맷 우선',
-    text: 'WEBP, JPG, PNG처럼 일반 사용자가 실제로 자주 마주치는 이미지 포맷을 먼저 지원합니다.',
+    title: '자주 쓰는 입력부터 확장',
+    text: 'JPG, PNG, WEBP뿐 아니라 TIFF, PSD, HEIC, PDF처럼 실제 업무에서 자주 들어오는 입력도 단계적으로 지원합니다.',
   },
   {
     title: '변환 + 압축 + 리사이즈',
@@ -162,6 +162,7 @@ export const staticPages: Record<string, StaticPage> = {
         heading: '무엇을 하나',
         bullets: [
           'WEBP/JPG/PNG 포맷 변환',
+          'TIFF·PSD·HEIC·PDF 입력을 브라우저용 이미지로 정리',
           '품질 값을 조절한 압축',
           '가로/세로 크기 조절',
           '다운로드용 새 파일 생성',
@@ -172,6 +173,7 @@ export const staticPages: Record<string, StaticPage> = {
         bullets: [
           '파일 이름만 바꾸는 식의 가짜 변환은 하지 않습니다.',
           '업로드 파일을 장기 보관하는 것을 기본값으로 두지 않습니다.',
+          'RAW 전체 포맷군은 아직 브라우저 버전에서 지원하지 않습니다.',
           '문서·영상·압축파일 같은 범용 포맷 전체를 한 번에 다루진 않습니다.',
         ],
       },
@@ -244,7 +246,11 @@ export const staticPages: Record<string, StaticPage> = {
       },
       {
         heading: 'PNG를 JPG로 바꾸면 투명 배경은 어떻게 되나요?',
-        paragraphs: ['JPG는 투명 배경을 지원하지 않기 때문에 보통 흰색 배경처럼 채워져 저장됩니다.'],
+        paragraphs: ['JPG는 투명 배경을 지원하지 않기 때문에 보통 흰색 배경처럼 채워져 저장됩니다. PSD나 일부 TIFF도 같은 방식으로 처리될 수 있습니다.'],
+      },
+      {
+        heading: 'RAW 파일도 바로 변환할 수 있나요?',
+        paragraphs: ['아직은 아닙니다. 이 브라우저 버전은 TIFF·PSD까지 우선 지원하고, NEF·CR2·ARW·DNG 같은 RAW 계열은 해석 범위와 처리 비용이 커서 다음 단계 검토 대상으로 남겨 두었습니다.'],
       },
     ],
   },
