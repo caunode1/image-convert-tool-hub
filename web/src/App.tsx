@@ -89,7 +89,7 @@ const SVG_LENGTH_UNITS_TO_PX: Record<string, number> = {
 
 let pdfWorkerConfigured = false
 let gifuctModulePromise: Promise<typeof import('gifuct-js')> | null = null
-let pdfModulePromise: Promise<typeof import('pdfjs-dist')> | null = null
+let pdfModulePromise: Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> | null = null
 let pdfWorkerPromise: Promise<{ default: string }> | null = null
 let heicModulePromise: Promise<typeof import('heic2any')> | null = null
 
@@ -99,8 +99,8 @@ function loadGifuctModule() {
 }
 
 async function loadPdfModule() {
-  if (!pdfModulePromise) pdfModulePromise = import('pdfjs-dist')
-  if (!pdfWorkerPromise) pdfWorkerPromise = import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+  if (!pdfModulePromise) pdfModulePromise = import('pdfjs-dist/legacy/build/pdf.mjs')
+  if (!pdfWorkerPromise) pdfWorkerPromise = import('pdfjs-dist/legacy/build/pdf.worker.mjs?url')
 
   const [pdfModule, workerModule] = await Promise.all([pdfModulePromise, pdfWorkerPromise])
   if (!pdfWorkerConfigured) {
