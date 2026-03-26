@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import './App.css'
-import { guides, siteInfo, staticPages, toolHighlights, type Guide } from './siteContent'
+import { guides, siteInfo, staticPages, type Guide } from './siteContent'
 
 type ToolMode = 'convert' | 'optimize'
 type TargetFormat = 'image/jpeg' | 'image/png' | 'image/webp'
@@ -453,205 +453,149 @@ function App() {
     a.click()
   }
 
-  const renderHome = () => (
-    <div className="page-stack">
-      <section className="hero surface-card">
-        <div className="hero-copy">
-          <p className="eyebrow">브라우저에서 바로 쓰는 이미지 도구</p>
-          <h1>WEBP, JPG, PNG 이미지를 설치 없이 바로 변환하고 압축해요</h1>
-          <p className="lead-copy">
-            일반 사용자가 검색해서 바로 쓸 수 있게 만든 실용형 이미지 툴 허브예요. 포맷 변환, 압축, 리사이즈를 빠르게 처리하고,
-            왜 화질이 달라지는지까지 같이 설명합니다.
-          </p>
-          <div className="button-row">
-            <button type="button" className="primary-button" onClick={() => navigate('/tool')}>
-              변환 도구 바로 쓰기
-            </button>
-            <button type="button" className="secondary-button" onClick={() => navigate('/guides')}>
-              가이드 먼저 보기
-            </button>
-          </div>
-          <div className="proof-row">
-            <span className="proof-chip">브라우저 처리 우선</span>
-            <span className="proof-chip">설치 없이 바로 사용</span>
-            <span className="proof-chip">정책/문의 페이지 공개</span>
-          </div>
-        </div>
-        <div className="hero-panel surface-soft">
-          <strong>초기 MVP 범위</strong>
-          <ul className="bullet-list tight">
-            <li>WEBP ↔ JPG/PNG 변환</li>
-            <li>이미지 압축 품질 조절</li>
-            <li>가로/세로 리사이즈</li>
-            <li>가이드/FAQ/정책 페이지 동시 운영</li>
-          </ul>
-        </div>
-      </section>
-
-      <section className="section-block">
-        <div className="section-heading left-align narrow">
-          <p className="eyebrow">왜 이 사이트를 쓰나</p>
-          <h2>툴만 있는 페이지보다, 실제로 이해하면서 쓸 수 있게 만들고 있어요</h2>
-        </div>
-        <div className="card-grid three-up">
-          {toolHighlights.map((item) => (
-            <article key={item.title} className="surface-card info-card">
-              <h3>{item.title}</h3>
-              <p>{item.text}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="section-block">
-        <div className="section-heading left-align narrow">
-          <p className="eyebrow">대표 가이드</p>
-          <h2>검색해서 들어온 사람이 바로 읽을 수 있는 문서를 같이 쌓습니다</h2>
-        </div>
-        <div className="card-grid three-up">
-          {guides.slice(0, 6).map((guide) => (
-            <article key={guide.slug} className="surface-card guide-card">
-              <p className="card-kicker">{guide.category}</p>
-              <h3>{guide.title}</h3>
-              <p>{guide.summary}</p>
-              <div className="meta-row">
-                <span>{guide.updated}</span>
-                <span>{guide.readingTime}</span>
+  const renderWorkbench = (compact = false) => (
+    <div className="workbench-stack">
+      <div className="tool-stage-grid">
+        <section className="surface-card tool-panel main-tool-panel">
+          {compact ? (
+            <div className="workspace-heading compact-workspace-heading">
+              <div>
+                <p className="eyebrow">Quick convert</p>
+                <h1>이미지 변환 / 압축 도구</h1>
+                <p>바로 파일 올리고 변환하면 되는 구조로 잡았어. 설명은 아래에 있고, 먼저 도구부터 쓸 수 있게 만들었어.</p>
               </div>
-              <button type="button" className="text-link-button" onClick={() => navigate(`/guides/${guide.slug}`)}>
-                읽어보기
+              <div className="proof-row compact-proof-row">
+                <span className="proof-chip">브라우저 처리 우선</span>
+                <span className="proof-chip">설치 없음</span>
+                <span className="proof-chip">다운로드 즉시 가능</span>
+              </div>
+            </div>
+          ) : (
+            <div className="workspace-heading">
+              <div>
+                <p className="eyebrow">Tool</p>
+                <h1>이미지 변환 / 압축 도구</h1>
+                <p>파일 이름만 바꾸는 가짜 변환이 아니라, 실제 새 파일을 만들어 내려받는 방식이에요.</p>
+              </div>
+            </div>
+          )}
+
+          <section className="preset-panel compact-preset-panel">
+            <div className="preset-panel-head">
+              <p className="eyebrow">빠른 작업</p>
+              <span>자주 쓰는 변환을 바로 고를 수 있어요</span>
+            </div>
+            <div className="preset-grid">
+              <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/jpeg', quality: 0.92 })}>
+                <strong>WEBP → JPG</strong>
+                <span>호환성 우선 / 사진 공유용</span>
               </button>
-            </article>
-          ))}
-        </div>
-      </section>
-    </div>
-  )
-
-  const renderToolPage = () => (
-    <div className="page-stack">
-      <header className="surface-card detail-header">
-        <p className="eyebrow">Tool</p>
-        <h1>이미지 변환 / 압축 도구</h1>
-        <p>첫 MVP에서는 JPG, PNG, WEBP 위주로 실제 브라우저 내 변환을 지원합니다. 파일 이름만 바꾸는 가짜 변환이 아니라, 실제 새 파일을 만들어 내려받는 방식이에요.</p>
-      </header>
-
-      <section className="surface-card preset-panel">
-        <div className="section-heading left-align narrow">
-          <p className="eyebrow">빠른 시작</p>
-          <h2>자주 쓰는 작업은 한 번에 고를 수 있게</h2>
-        </div>
-        <div className="preset-grid">
-          <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/jpeg', quality: 0.92 })}>
-            <strong>WEBP → JPG</strong>
-            <span>호환성 우선 / 사진 공유용</span>
-          </button>
-          <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/png', quality: 1 })}>
-            <strong>JPG → PNG</strong>
-            <span>그래픽/배경 보존용</span>
-          </button>
-          <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/webp', quality: 0.86 })}>
-            <strong>JPG → WEBP</strong>
-            <span>웹 업로드/용량 절약용</span>
-          </button>
-          <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'optimize', format: targetFormat, quality: 0.8, resizeEnabled: true })}>
-            <strong>용량 줄이기</strong>
-            <span>압축 + 리사이즈부터 바로 시작</span>
-          </button>
-        </div>
-      </section>
-
-      <div className="tool-layout">
-        <form className="surface-card tool-panel" onSubmit={handleSubmit}>
-          <div className="toolbar-row">
-            <button type="button" className={mode === 'convert' ? 'segmented active' : 'segmented'} onClick={() => setMode('convert')}>
-              포맷 변환
-            </button>
-            <button type="button" className={mode === 'optimize' ? 'segmented active' : 'segmented'} onClick={() => setMode('optimize')}>
-              압축/리사이즈
-            </button>
-          </div>
-
-          <label className="upload-box">
-            <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleFileChange} hidden />
-            <strong>이미지 파일 업로드</strong>
-            <span>PNG, JPG, WEBP 파일을 올리면 브라우저 안에서 바로 처리합니다.</span>
-          </label>
-
-          {originalInfo ? (
-            <div className="inline-info-card">
-              <strong>{originalInfo.filename}</strong>
-              <p>
-                원본 형식 {originalLabel} · {originalInfo.width} × {originalInfo.height}px · {originalInfo.sizeLabel}
-              </p>
+              <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/png', quality: 1 })}>
+                <strong>JPG → PNG</strong>
+                <span>그래픽/배경 보존용</span>
+              </button>
+              <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/webp', quality: 0.86 })}>
+                <strong>JPG → WEBP</strong>
+                <span>웹 업로드/용량 절약용</span>
+              </button>
+              <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'optimize', format: targetFormat, quality: 0.8, resizeEnabled: true })}>
+                <strong>용량 줄이기</strong>
+                <span>압축 + 리사이즈부터 바로 시작</span>
+              </button>
             </div>
-          ) : null}
+          </section>
 
-          <div className="field-grid">
-            <label className="field">
-              <span>출력 형식</span>
-              <select value={targetFormat} onChange={(event) => setTargetFormat(event.target.value as TargetFormat)}>
-                <option value="image/jpeg">JPG</option>
-                <option value="image/png">PNG</option>
-                <option value="image/webp">WEBP</option>
-              </select>
+          <form className="tool-form-shell" onSubmit={handleSubmit}>
+            <div className="toolbar-row">
+              <button type="button" className={mode === 'convert' ? 'segmented active' : 'segmented'} onClick={() => setMode('convert')}>
+                포맷 변환
+              </button>
+              <button type="button" className={mode === 'optimize' ? 'segmented active' : 'segmented'} onClick={() => setMode('optimize')}>
+                압축/리사이즈
+              </button>
+            </div>
+
+            <label className="upload-box">
+              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleFileChange} hidden />
+              <strong>이미지 파일 업로드</strong>
+              <span>PNG, JPG, WEBP 파일을 올리면 브라우저 안에서 바로 처리합니다.</span>
             </label>
-            <label className="field">
-              <span>품질 / 압축 정도</span>
-              <input type="range" min="0.4" max="1" step="0.05" value={quality} onChange={(event) => setQuality(Number(event.target.value))} disabled={qualityDisabled} />
-              <small>{qualityDisabled ? 'PNG는 주로 무손실 저장에 가깝습니다.' : `${Math.round(quality * 100)}%`}</small>
-            </label>
-          </div>
 
-          <p className="helper-text">{qualityHelper}</p>
-
-          {isTransparentToJpg ? (
-            <div className="warning-box">
-              <strong>투명 배경 주의</strong>
-              <p>PNG/WEBP를 JPG로 바꾸면 투명 배경이 흰색으로 채워질 수 있어요.</p>
-            </div>
-          ) : null}
-
-          {originalMime === targetFormat ? (
-            <div className="helper-box">
-              <strong>같은 포맷으로 다시 저장</strong>
-              <p>지금 설정은 포맷 변경보다는 품질 조절이나 리사이즈 목적에 더 가깝습니다.</p>
-            </div>
-          ) : null}
-
-          <label className="checkbox-row">
-            <input type="checkbox" checked={resizeEnabled} onChange={(event) => setResizeEnabled(event.target.checked)} />
-            <span>크기 조절도 같이 적용</span>
-          </label>
-
-          {resizeEnabled ? (
-            <>
-              <label className="checkbox-row compact-checkbox">
-                <input type="checkbox" checked={keepAspectRatio} onChange={(event) => setKeepAspectRatio(event.target.checked)} />
-                <span>비율 유지</span>
-              </label>
-              <div className="field-grid">
-                <label className="field">
-                  <span>가로(px)</span>
-                  <input value={resizeWidth} onChange={(event) => updateResizeWidth(event.target.value)} inputMode="numeric" />
-                </label>
-                <label className="field">
-                  <span>세로(px)</span>
-                  <input value={resizeHeight} onChange={(event) => updateResizeHeight(event.target.value)} inputMode="numeric" />
-                </label>
+            {originalInfo ? (
+              <div className="inline-info-card">
+                <strong>{originalInfo.filename}</strong>
+                <p>
+                  원본 형식 {originalLabel} · {originalInfo.width} × {originalInfo.height}px · {originalInfo.sizeLabel}
+                </p>
               </div>
-            </>
-          ) : null}
+            ) : null}
 
-          {notice ? <p className="notice-text">{notice}</p> : null}
-          {error ? <p className="error-text">{error}</p> : null}
+            <div className="field-grid">
+              <label className="field">
+                <span>출력 형식</span>
+                <select value={targetFormat} onChange={(event) => setTargetFormat(event.target.value as TargetFormat)}>
+                  <option value="image/jpeg">JPG</option>
+                  <option value="image/png">PNG</option>
+                  <option value="image/webp">WEBP</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>품질 / 압축 정도</span>
+                <input type="range" min="0.4" max="1" step="0.05" value={quality} onChange={(event) => setQuality(Number(event.target.value))} disabled={qualityDisabled} />
+                <small>{qualityDisabled ? 'PNG는 주로 무손실 저장에 가깝습니다.' : `${Math.round(quality * 100)}%`}</small>
+              </label>
+            </div>
 
-          <div className="button-row">
-            <button type="submit" className="primary-button" disabled={!file || isProcessing}>
-              {isProcessing ? '처리 중...' : mode === 'convert' ? `${targetLabel}로 변환` : '압축/리사이즈 시작'}
-            </button>
-          </div>
-        </form>
+            <p className="helper-text">{qualityHelper}</p>
+
+            {isTransparentToJpg ? (
+              <div className="warning-box">
+                <strong>투명 배경 주의</strong>
+                <p>PNG/WEBP를 JPG로 바꾸면 투명 배경이 흰색으로 채워질 수 있어요.</p>
+              </div>
+            ) : null}
+
+            {originalMime === targetFormat ? (
+              <div className="helper-box">
+                <strong>같은 포맷으로 다시 저장</strong>
+                <p>지금 설정은 포맷 변경보다는 품질 조절이나 리사이즈 목적에 더 가깝습니다.</p>
+              </div>
+            ) : null}
+
+            <label className="checkbox-row">
+              <input type="checkbox" checked={resizeEnabled} onChange={(event) => setResizeEnabled(event.target.checked)} />
+              <span>크기 조절도 같이 적용</span>
+            </label>
+
+            {resizeEnabled ? (
+              <>
+                <label className="checkbox-row compact-checkbox">
+                  <input type="checkbox" checked={keepAspectRatio} onChange={(event) => setKeepAspectRatio(event.target.checked)} />
+                  <span>비율 유지</span>
+                </label>
+                <div className="field-grid">
+                  <label className="field">
+                    <span>가로(px)</span>
+                    <input value={resizeWidth} onChange={(event) => updateResizeWidth(event.target.value)} inputMode="numeric" />
+                  </label>
+                  <label className="field">
+                    <span>세로(px)</span>
+                    <input value={resizeHeight} onChange={(event) => updateResizeHeight(event.target.value)} inputMode="numeric" />
+                  </label>
+                </div>
+              </>
+            ) : null}
+
+            {notice ? <p className="notice-text">{notice}</p> : null}
+            {error ? <p className="error-text">{error}</p> : null}
+
+            <div className="button-row">
+              <button type="submit" className="primary-button" disabled={!file || isProcessing}>
+                {isProcessing ? '처리 중...' : mode === 'convert' ? `${targetLabel}로 변환` : '압축/리사이즈 시작'}
+              </button>
+            </div>
+          </form>
+        </section>
 
         <aside className="surface-card side-panel">
           <h2>현재 파일 정보</h2>
@@ -702,6 +646,71 @@ function App() {
           </div>
         </section>
       ) : null}
+    </div>
+  )
+
+  const renderHome = () => (
+    <div className="page-stack tool-home-stack">
+      <section className="workspace-shell">
+        <div className="workspace-topbar">
+          <div>
+            <p className="workspace-label">image utility</p>
+            <h1>이미지 변환 툴 허브</h1>
+            <p className="workspace-subtitle">들어오자마자 바로 변환하고, 필요한 설명은 아래에서 짧게 확인하는 툴 중심 구조로 바꿨어.</p>
+          </div>
+          <div className="workspace-mini-stats">
+            <span>WEBP / JPG / PNG</span>
+            <span>브라우저 처리 우선</span>
+            <span>변환 + 압축 + 리사이즈</span>
+          </div>
+        </div>
+        {renderWorkbench(true)}
+      </section>
+
+      <section className="utility-dock-grid">
+        <article className="surface-card dock-card">
+          <p className="card-kicker">지원 작업</p>
+          <h3>지금 바로 많이 쓰는 이미지 작업</h3>
+          <ul className="bullet-list tight">
+            <li>WEBP → JPG/PNG</li>
+            <li>JPG/PNG → WEBP</li>
+            <li>압축 품질 조절</li>
+            <li>비율 유지 리사이즈</li>
+          </ul>
+        </article>
+        <article className="surface-card dock-card">
+          <p className="card-kicker">처리 원칙</p>
+          <h3>가급적 브라우저 안에서 끝내는 방향</h3>
+          <p>설치 없이 바로 쓰고, 업로드 파일을 장기 보관하지 않는 방향으로 설계하고 있어. 민감한 파일은 올리기 전에 한 번 더 확인하면 돼.</p>
+        </article>
+        <article className="surface-card dock-card guide-dock-card">
+          <p className="card-kicker">가이드</p>
+          <h3>필요한 설명은 짧고 바로 읽히게</h3>
+          <div className="mini-guide-list">
+            {guides.slice(0, 3).map((guide) => (
+              <button key={guide.slug} type="button" className="mini-guide-item" onClick={() => navigate(`/guides/${guide.slug}`)}>
+                <strong>{guide.title}</strong>
+                <span>{guide.readingTime}</span>
+              </button>
+            ))}
+          </div>
+        </article>
+      </section>
+    </div>
+  )
+
+  const renderToolPage = () => (
+    <div className="page-stack tool-page-stack">
+      <section className="workspace-shell compact-shell">
+        <div className="workspace-topbar compact-topbar">
+          <div>
+            <p className="workspace-label">tool workspace</p>
+            <h1>이미지 변환 작업화면</h1>
+            <p className="workspace-subtitle">파일 업로드 → 설정 확인 → 변환 → 비교 → 다운로드 흐름으로 바로 쓰면 돼.</p>
+          </div>
+        </div>
+        {renderWorkbench(false)}
+      </section>
     </div>
   )
 
