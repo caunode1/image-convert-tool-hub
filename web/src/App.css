@@ -238,6 +238,10 @@ button {
   justify-self: start;
 }
 
+.full-width {
+  width: 100%;
+}
+
 .text-link-button::after {
   content: '→';
   margin-left: 6px;
@@ -359,7 +363,8 @@ button {
 .inline-info-card,
 .helper-box,
 .warning-box,
-.result-box {
+.result-box,
+.progress-box {
   display: grid;
   gap: 8px;
   padding: 14px 16px;
@@ -389,6 +394,115 @@ button {
   background: rgba(124, 156, 255, 0.08);
 }
 
+.source-file-card {
+  gap: 12px;
+}
+
+.source-file-card-head,
+.source-note-head,
+.progress-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.source-file-card-head p,
+.progress-box p,
+.progress-box small {
+  margin: 0;
+}
+
+.helper-pill,
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.helper-pill {
+  background: rgba(255, 255, 255, 0.08);
+  color: #dbe5ff;
+}
+
+.full-list {
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.rich-item {
+  gap: 10px;
+}
+
+.source-note-head strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.file-option-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mini-field {
+  display: grid;
+  gap: 6px;
+}
+
+.mini-field span {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #dbe5ff;
+}
+
+.mini-field select {
+  width: 100%;
+  min-height: 40px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(5, 10, 19, 0.42);
+  color: var(--text);
+}
+
+.option-hint,
+.status-detail {
+  line-height: 1.55;
+}
+
+.status-detail.error {
+  color: #fecdd3;
+}
+
+.status-chip.idle,
+.status-chip.queued {
+  background: rgba(148, 163, 184, 0.14);
+  color: #dbe5ff;
+}
+
+.status-chip.processing {
+  background: rgba(124, 156, 255, 0.16);
+  color: #dbe5ff;
+}
+
+.status-chip.success {
+  background: rgba(34, 197, 94, 0.16);
+  color: #c7f9d7;
+}
+
+.status-chip.error {
+  background: rgba(251, 113, 133, 0.14);
+  color: #fecdd3;
+}
+
 .helper-box {
   background: rgba(148, 163, 184, 0.08);
 }
@@ -401,6 +515,32 @@ button {
 .result-box {
   background: rgba(34, 197, 94, 0.1);
   border: 1px solid rgba(34, 197, 94, 0.16);
+}
+
+.progress-box {
+  background: rgba(124, 156, 255, 0.08);
+  border: 1px solid rgba(124, 156, 255, 0.16);
+}
+
+.progress-head span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--brand), var(--brand-2));
+  transition: width 180ms ease;
 }
 
 .field-grid {
@@ -584,6 +724,10 @@ button {
   color: var(--muted);
 }
 
+.result-row small {
+  color: var(--muted);
+}
+
 .site-footer {
   border-top: 1px solid rgba(148, 163, 184, 0.12);
   background: rgba(8, 12, 23, 0.88);
@@ -607,6 +751,7 @@ button {
   .card-grid.three-up,
   .preview-compare-grid,
   .field-grid,
+  .file-option-grid,
   .tool-layout,
   .footer-grid {
     grid-template-columns: 1fr;
@@ -655,6 +800,15 @@ button {
   .preset-grid,
   .preview-compare-grid {
     grid-template-columns: 1fr;
+  }
+
+  .source-file-card-head,
+  .source-note-head,
+  .progress-head,
+  .result-row,
+  .preset-panel-head {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .nav-links,

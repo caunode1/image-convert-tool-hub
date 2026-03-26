@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
-import JSZip from 'jszip'
-import heic2any from 'heic2any'
-import { decompressFrames, parseGIF } from 'gifuct-js'
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist'
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import './App.css'
 import { guides, siteInfo, staticPages, type Guide } from './siteContent'
 
 type ToolMode = 'convert' | 'optimize'
 type TargetFormat = 'image/jpeg' | 'image/png' | 'image/webp'
 type GifOutputMode = 'poster' | 'sheet'
+type SvgRasterScale = 1 | 2 | 3
 
 const SUPPORTED_INPUT_MIME_TYPES = [
   'image/png',
@@ -54,7 +50,7 @@ const FILE_INPUT_ACCEPT = [
 const SUPPORTED_INPUT_COPY = 'JPG, PNG, WEBP, BMP, GIF, SVG, HEIC/HEIF, PDF, TIFF, PSD'
 const RAW_INPUT_COPY = 'RAW(NEF/CR2/ARW/DNG 등)는 아직 미지원'
 const SVG_FALLBACK_SIZE = 1024
-const SVG_RENDER_OVERSAMPLE = 2
+const DEFAULT_SVG_RASTER_SCALE: SvgRasterScale = 2
 const MAX_VECTOR_RENDER_DIMENSION = 4096
 const MAX_GIF_SHEET_FRAMES = 12
 
@@ -91,7 +87,35 @@ const SVG_LENGTH_UNITS_TO_PX: Record<string, number> = {
   q: 96 / 101.6,
 }
 
-GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+let pdfWorkerConfigured = false
+let gifuctModulePromise: Promise<typeof import('gifuct-js')> | null = null
+let pdfModulePromise: Promise<typeof import('pdfjs-dist')> | null = null
+let pdfWorkerPromise: Promise<{ default: string }> | null = null
+let heicModulePromise: Promise<typeof import('heic2any')> | null = null
+
+function loadGifuctModule() {
+  if (!gifuctModulePromise) gifuctModulePromise = import('gifuct-js')
+  return gifuctModulePromise
+}
+
+async function loadPdfModule() {
+  if (!pdfModulePromise) pdfModulePromise = import('pdfjs-dist')
+  if (!pdfWorkerPromise) pdfWorkerPromise = import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+
+  const [pdfModule, workerModule] = await Promise.all([pdfModulePromise, pdfWorkerPromise])
+  if (!pdfWorkerConfigured) {
+    pdfModule.GlobalWorkerOptions.workerSrc = workerModule.default
+    pdfWorkerConfigured = true
+  }
+
+  return pdfModule
+}
+
+async function loadHeicConverter() {
+  if (!heicModulePromise) heicModulePromise = import('heic2any')
+  const module = await heicModulePromise
+  return module.default
+}
 
 type SourceItem = {
   id: string
@@ -119,6 +143,29 @@ type ConvertedItem = {
   reductionText: string
   url: string
   blob: Blob
+}
+
+type FileSpecificOptions = {
+  gifOutputMode?: GifOutputMode
+  svgRasterScale?: SvgRasterScale
+}
+
+type BatchItemState = 'queued' | 'processing' | 'success' | 'error'
+
+type BatchItemStatus = {
+  state: BatchItemState
+  message: string
+  outputCount?: number
+  error?: string
+}
+
+type BatchProgress = {
+  totalFiles: number
+  completedFiles: number
+  successFiles: number
+  failedFiles: number
+  currentFileName: string
+  currentMessage: string
 }
 
 type SvgRasterMeta = {
@@ -243,6 +290,24 @@ function formatReduction(before: number, after: number) {
   const diff = Math.round(((after - before) / before) * 100)
   if (diff === 0) return '용량 변화 거의 없음'
   return diff < 0 ? `${Math.abs(diff)}% 감소` : `${diff}% 증가`
+}
+
+function svgRasterScaleLabel(scale: SvgRasterScale) {
+  if (scale === 1) return '빠르게'
+  if (scale === 3) return '선명하게'
+  return '균형형'
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message
+  return '변환 중 오류가 발생했습니다.'
+}
+
+function createInitialFileOptions(items: SourceItem[]) {
+  return items.reduce<Record<string, FileSpecificOptions>>((acc, item) => {
+    if (item.mimeType === 'image/svg+xml') acc[item.id] = { svgRasterScale: DEFAULT_SVG_RASTER_SCALE }
+    return acc
+  }, {})
 }
 
 function getCanvasContext(canvas: HTMLCanvasElement, errorMessage: string) {
@@ -410,6 +475,7 @@ async function rgbaToPngBlob(rgba: Uint8Array, width: number, height: number) {
 }
 
 async function renderPdfPageToPngBlob(file: File, pageNumber = 1) {
+  const { getDocument } = await loadPdfModule()
   const pdf = await getDocument({ data: await file.arrayBuffer() }).promise
   const page = await pdf.getPage(pageNumber)
   const viewport = page.getViewport({ scale: 1.5 })
@@ -474,6 +540,7 @@ function normalizeGifDelay(delay: number) {
 }
 
 async function readGifFrames(file: File) {
+  const { parseGIF, decompressFrames } = await loadGifuctModule()
   const parsed = parseGIF(await file.arrayBuffer())
   const frames = decompressFrames(parsed, true)
   return {
@@ -630,8 +697,12 @@ async function prepareSourceItem(file: File): Promise<SourceItem> {
   const id = `${file.name}-${file.lastModified}-${file.size}`
 
   if (mimeType === 'image/heic' || mimeType === 'image/heif') {
+    const heic2any = await loadHeicConverter()
     const converted = await heic2any({ blob: file, toType: 'image/png' })
     const blob = Array.isArray(converted) ? converted[0] : converted
+    if (!(blob instanceof Blob)) {
+      throw new Error('HEIC/HEIF 파일을 브라우저용 이미지로 바꾸지 못했습니다.')
+    }
     const previewUrl = URL.createObjectURL(blob)
     const image = await loadImageFromBlob(blob)
     return {
@@ -763,6 +834,7 @@ async function convertFile(options: {
   resizeHeight?: number
   pdfPageNumber?: number
   gifOutputMode: GifOutputMode
+  svgRasterScale?: SvgRasterScale
 }) {
   if (options.source.mimeType === 'image/gif' && options.source.animated) {
     const gifRendered = await convertGifToWorkingBlob({
@@ -820,8 +892,9 @@ async function convertFile(options: {
   }
 
   if (options.source.mimeType === 'image/svg+xml') {
-    const renderWidth = Math.min(MAX_VECTOR_RENDER_DIMENSION, clampDimension(width * SVG_RENDER_OVERSAMPLE))
-    const renderHeight = Math.min(MAX_VECTOR_RENDER_DIMENSION, clampDimension(height * SVG_RENDER_OVERSAMPLE))
+    const svgRasterScale = options.svgRasterScale ?? DEFAULT_SVG_RASTER_SCALE
+    const renderWidth = Math.min(MAX_VECTOR_RENDER_DIMENSION, clampDimension(width * svgRasterScale))
+    const renderHeight = Math.min(MAX_VECTOR_RENDER_DIMENSION, clampDimension(height * svgRasterScale))
 
     if (renderWidth > width || renderHeight > height) {
       const rasterCanvas = document.createElement('canvas')
@@ -942,7 +1015,10 @@ function App() {
   const [resizeWidth, setResizeWidth] = useState('')
   const [resizeHeight, setResizeHeight] = useState('')
   const [gifOutputMode, setGifOutputMode] = useState<GifOutputMode>('poster')
+  const [fileOptions, setFileOptions] = useState<Record<string, FileSpecificOptions>>({})
   const [results, setResults] = useState<ConvertedItem[]>([])
+  const [batchStatuses, setBatchStatuses] = useState<Record<string, BatchItemStatus>>({})
+  const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
@@ -963,6 +1039,10 @@ function App() {
     : mode === 'optimize'
       ? '용량을 많이 줄이고 싶다면 70~85%부터 비교해 보시는 것을 권장합니다.'
       : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다. HEIC, PDF, TIFF, PSD는 내부적으로 브라우저용 이미지로 바꾼 뒤 출력합니다.'
+  const batchProgressPercent = batchProgress ? Math.round((batchProgress.completedFiles / Math.max(1, batchProgress.totalFiles)) * 100) : 0
+
+  const getGifOutputModeForItem = (item: SourceItem) => fileOptions[item.id]?.gifOutputMode ?? gifOutputMode
+  const getSvgRasterScaleForItem = (item: SourceItem): SvgRasterScale => fileOptions[item.id]?.svgRasterScale ?? DEFAULT_SVG_RASTER_SCALE
 
   const seoMeta = useMemo(() => {
     if (currentGuide) return { title: `${currentGuide.title} | ${siteInfo.name}`, description: currentGuide.description }
@@ -1023,10 +1103,33 @@ function App() {
     sourceItems.forEach((item) => URL.revokeObjectURL(item.previewUrl))
     results.forEach((item) => URL.revokeObjectURL(item.url))
     setSourceItems([])
+    setFileOptions({})
     setResults([])
+    setBatchStatuses({})
+    setBatchProgress(null)
     setResizeWidth('')
     setResizeHeight('')
     setGifOutputMode('poster')
+  }
+
+  const updateGifFileOption = (sourceId: string, nextMode: GifOutputMode) => {
+    setFileOptions((current) => ({
+      ...current,
+      [sourceId]: {
+        ...current[sourceId],
+        gifOutputMode: nextMode,
+      },
+    }))
+  }
+
+  const updateSvgFileOption = (sourceId: string, nextScale: SvgRasterScale) => {
+    setFileOptions((current) => ({
+      ...current,
+      [sourceId]: {
+        ...current[sourceId],
+        svgRasterScale: nextScale,
+      },
+    }))
   }
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1059,6 +1162,9 @@ function App() {
 
     if (supported.length) {
       setSourceItems(supported)
+      setFileOptions(createInitialFileOptions(supported))
+      setBatchStatuses({})
+      setBatchProgress(null)
       setResizeWidth(String(supported[0].width))
       setResizeHeight(String(supported[0].height))
 
@@ -1068,8 +1174,8 @@ function App() {
         rawNames.length ? `RAW ${rawNames.length}개는 아직 지원하지 않아 제외했습니다.` : '',
         unsupportedNames.length ? `미지원 파일 ${unsupportedNames.length}개는 제외했습니다.` : '',
         unreadableNames.length ? `읽지 못한 파일 ${unreadableNames.length}개는 제외했습니다.` : '',
-        animatedGifCount ? `애니메이션 GIF ${animatedGifCount}개는 대표 프레임 또는 프레임 시트로 처리할 수 있습니다.` : '',
-        svgCount ? `SVG ${svgCount}개는 viewBox/크기 정보를 읽어 안정적으로 래스터라이즈합니다.` : '',
+        animatedGifCount ? `애니메이션 GIF ${animatedGifCount}개는 파일별로 대표 프레임/시트 선택이 가능합니다.` : '',
+        svgCount ? `SVG ${svgCount}개는 파일별 선명도 옵션을 함께 조절할 수 있습니다.` : '',
       ].filter(Boolean)
 
       setNotice(`${supported.length}개 파일을 불러왔습니다.${excludedMessages.length ? ` ${excludedMessages.join(' ')}` : ''}`)
@@ -1124,18 +1230,73 @@ function App() {
 
     setIsProcessing(true)
     setError('')
-    setNotice('파일을 변환하고 있습니다...')
+    setNotice('파일별 상태를 업데이트하며 변환하고 있습니다...')
     results.forEach((item) => URL.revokeObjectURL(item.url))
     setResults([])
 
+    const initialStatuses = sourceItems.reduce<Record<string, BatchItemStatus>>((acc, item) => {
+      acc[item.id] = { state: 'queued', message: '대기 중' }
+      return acc
+    }, {})
+
+    setBatchStatuses(initialStatuses)
+    setBatchProgress({
+      totalFiles: sourceItems.length,
+      completedFiles: 0,
+      successFiles: 0,
+      failedFiles: 0,
+      currentFileName: sourceItems[0]?.file.name ?? '',
+      currentMessage: '대기 중',
+    })
+
     const nextResults: ConvertedItem[] = []
-    const failed: string[] = []
+    const failed: Array<{ name: string; reason: string }> = []
+    let completedFiles = 0
+    let successFiles = 0
+    let failedFiles = 0
+
+    const updateProgress = (next: { currentFileName: string; currentMessage: string }) => {
+      setBatchProgress({
+        totalFiles: sourceItems.length,
+        completedFiles,
+        successFiles,
+        failedFiles,
+        currentFileName: next.currentFileName,
+        currentMessage: next.currentMessage,
+      })
+    }
 
     for (const item of sourceItems) {
+      const gifOutputModeForItem = getGifOutputModeForItem(item)
+      const svgRasterScaleForItem = getSvgRasterScaleForItem(item)
+      const isPdf = item.mimeType === 'application/pdf'
+      const totalPages = isPdf ? (item.pageCount ?? 1) : 1
+
+      setBatchStatuses((current) => ({
+        ...current,
+        [item.id]: {
+          state: 'processing',
+          message: isPdf && totalPages > 1 ? `1 / ${totalPages}페이지 처리 중` : '변환 중',
+        },
+      }))
+      updateProgress({
+        currentFileName: item.file.name,
+        currentMessage: isPdf && totalPages > 1 ? `1 / ${totalPages}페이지 처리 중` : '변환 중',
+      })
+
       try {
-        if (item.mimeType === 'application/pdf') {
-          const totalPages = item.pageCount ?? 1
+        if (isPdf) {
           for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+            const pageMessage = `${pageNumber} / ${totalPages}페이지 처리 중`
+            setBatchStatuses((current) => ({
+              ...current,
+              [item.id]: {
+                state: 'processing',
+                message: pageMessage,
+              },
+            }))
+            updateProgress({ currentFileName: item.file.name, currentMessage: pageMessage })
+
             const converted = await convertFile({
               source: item,
               targetFormat,
@@ -1143,7 +1304,8 @@ function App() {
               resizeWidth: parsedWidth,
               resizeHeight: parsedHeight,
               pdfPageNumber: pageNumber,
-              gifOutputMode,
+              gifOutputMode: gifOutputModeForItem,
+              svgRasterScale: svgRasterScaleForItem,
             })
             const url = URL.createObjectURL(converted.blob)
             nextResults.push({
@@ -1166,10 +1328,11 @@ function App() {
             quality,
             resizeWidth: parsedWidth,
             resizeHeight: parsedHeight,
-            gifOutputMode,
+            gifOutputMode: gifOutputModeForItem,
+            svgRasterScale: svgRasterScaleForItem,
           })
           const url = URL.createObjectURL(converted.blob)
-          const gifSuffix = item.mimeType === 'image/gif' && item.animated ? (gifOutputMode === 'sheet' ? '-framesheet' : '-poster') : '-converted'
+          const gifSuffix = item.mimeType === 'image/gif' && item.animated ? (gifOutputModeForItem === 'sheet' ? '-framesheet' : '-poster') : '-converted'
           nextResults.push({
             id: `${item.id}-${targetFormat}`,
             sourceId: item.id,
@@ -1183,16 +1346,56 @@ function App() {
             blob: converted.blob,
           })
         }
-      } catch {
-        failed.push(item.file.name)
+
+        completedFiles += 1
+        successFiles += 1
+        setBatchStatuses((current) => ({
+          ...current,
+          [item.id]: {
+            state: 'success',
+            message: totalPages > 1 ? `${totalPages}페이지 변환 완료` : '변환 완료',
+            outputCount: totalPages,
+          },
+        }))
+        updateProgress({
+          currentFileName: item.file.name,
+          currentMessage: totalPages > 1 ? `${totalPages}페이지 변환 완료` : '변환 완료',
+        })
+      } catch (conversionError) {
+        completedFiles += 1
+        failedFiles += 1
+        const reason = getErrorMessage(conversionError)
+        failed.push({ name: item.file.name, reason })
+        setBatchStatuses((current) => ({
+          ...current,
+          [item.id]: {
+            state: 'error',
+            message: '변환 실패',
+            error: reason,
+          },
+        }))
+        updateProgress({
+          currentFileName: item.file.name,
+          currentMessage: '변환 실패',
+        })
       }
     }
 
     setResults(nextResults)
+    setBatchProgress({
+      totalFiles: sourceItems.length,
+      completedFiles,
+      successFiles,
+      failedFiles,
+      currentFileName: '',
+      currentMessage: failedFiles ? `성공 ${successFiles}개 / 실패 ${failedFiles}개` : `총 ${successFiles}개 파일 완료`,
+    })
+
     if (failed.length) {
-      setNotice(`${nextResults.length}개 파일 변환 완료, ${failed.length}개 파일은 변환에 실패했습니다.`)
+      const summary = failed.slice(0, 2).map((item) => `${item.name}: ${item.reason}`).join(' · ')
+      setNotice(`${successFiles}개 성공, ${failedFiles}개 실패${summary ? ` · ${summary}` : ''}`)
     } else {
-      setNotice(`${nextResults.length}개 파일 변환이 완료되었습니다.`)
+      setNotice(`${nextResults.length}개 결과를 만들었습니다.`)
     }
     setIsProcessing(false)
   }
@@ -1206,6 +1409,7 @@ function App() {
 
   const downloadAllAsZip = async () => {
     if (!results.length) return
+    const { default: JSZip } = await import('jszip')
     const zip = new JSZip()
     results.forEach((item) => {
       zip.file(item.filename, item.blob)
@@ -1288,21 +1492,79 @@ function App() {
             </label>
 
             {sourceItems.length ? (
-              <div className="inline-info-card">
-                <strong>{sourceItems.length}개 파일 준비 완료</strong>
-                <p>입력 형식 예시: {[...new Set(sourceItems.map((item) => mimeToLabel(item.mimeType)))].join(', ')}</p>
-                <div className="source-note-list">
-                  {sourceItems.slice(0, 4).map((item) => (
-                    <div key={item.id} className="source-note-item">
-                      <strong>{item.file.name}</strong>
-                      <span>
-                        {mimeToLabel(item.mimeType)} · {item.sizeLabel}
-                        {item.pageCount ? ` · ${item.pageCount}페이지` : ''}
-                        {item.animated ? ` · 애니메이션 ${item.frameCount ?? 0}프레임` : ''}
-                      </span>
-                      {item.note ? <small>{item.note}</small> : null}
-                    </div>
-                  ))}
+              <div className="inline-info-card source-file-card">
+                <div className="source-file-card-head">
+                  <div>
+                    <strong>{sourceItems.length}개 파일 준비 완료</strong>
+                    <p>입력 형식 예시: {[...new Set(sourceItems.map((item) => mimeToLabel(item.mimeType)))].join(', ')}</p>
+                  </div>
+                  <span className="helper-pill">특수 파일은 아래에서 개별 설정</span>
+                </div>
+                <div className="source-note-list full-list">
+                  {sourceItems.map((item) => {
+                    const status = batchStatuses[item.id]
+                    const statusClass = status ? `status-chip ${status.state}` : 'status-chip idle'
+                    const gifModeForItem = getGifOutputModeForItem(item)
+                    const svgScaleForItem = getSvgRasterScaleForItem(item)
+
+                    return (
+                      <div key={item.id} className="source-note-item rich-item">
+                        <div className="source-note-head">
+                          <div>
+                            <strong>{item.file.name}</strong>
+                            <span>
+                              {mimeToLabel(item.mimeType)} · {item.sizeLabel}
+                              {item.pageCount ? ` · ${item.pageCount}페이지` : ''}
+                              {item.animated ? ` · 애니메이션 ${item.frameCount ?? 0}프레임` : ''}
+                            </span>
+                          </div>
+                          <span className={statusClass}>{status?.state === 'queued' ? '대기' : status?.state === 'processing' ? '처리 중' : status?.state === 'success' ? '완료' : status?.state === 'error' ? '실패' : '준비'}</span>
+                        </div>
+
+                        {item.note ? <small>{item.note}</small> : null}
+
+                        {item.animated || item.mimeType === 'image/svg+xml' ? (
+                          <div className="file-option-grid">
+                            {item.animated ? (
+                              <label className="mini-field">
+                                <span>GIF 처리</span>
+                                <select value={gifModeForItem} onChange={(event) => updateGifFileOption(item.id, event.target.value as GifOutputMode)} disabled={isProcessing}>
+                                  <option value="poster">대표 프레임 1장</option>
+                                  <option value="sheet">프레임 시트 1장</option>
+                                </select>
+                              </label>
+                            ) : null}
+                            {item.mimeType === 'image/svg+xml' ? (
+                              <label className="mini-field">
+                                <span>SVG 선명도</span>
+                                <select value={String(svgScaleForItem)} onChange={(event) => updateSvgFileOption(item.id, Number(event.target.value) as SvgRasterScale)} disabled={isProcessing}>
+                                  <option value="1">빠르게</option>
+                                  <option value="2">균형형</option>
+                                  <option value="3">선명하게</option>
+                                </select>
+                              </label>
+                            ) : null}
+                          </div>
+                        ) : null}
+
+                        {item.animated || item.mimeType === 'image/svg+xml' ? (
+                          <small className="option-hint">
+                            {item.animated ? `이 파일은 ${gifModeForItem === 'sheet' ? '프레임 시트' : '대표 프레임'} 기준으로 처리합니다.` : ''}
+                            {item.animated && item.mimeType === 'image/svg+xml' ? ' ' : ''}
+                            {item.mimeType === 'image/svg+xml' ? `SVG는 ${svgRasterScaleLabel(svgScaleForItem)} 모드로 래스터라이즈합니다.` : ''}
+                          </small>
+                        ) : null}
+
+                        {status ? (
+                          <small className={status.error ? 'status-detail error' : 'status-detail'}>
+                            {status.message}
+                            {status.outputCount ? ` · 결과 ${status.outputCount}개` : ''}
+                            {status.error ? ` · ${status.error}` : ''}
+                          </small>
+                        ) : null}
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             ) : null}
@@ -1341,7 +1603,7 @@ function App() {
                       <option value="poster">대표 프레임 1장으로 변환</option>
                       <option value="sheet">프레임 시트 1장으로 정리</option>
                     </select>
-                    <small>{gifOutputMode === 'sheet' ? `최대 ${MAX_GIF_SHEET_FRAMES}프레임을 한 장에 정리합니다.` : '애니메이션 전체는 유지되지 않고, 중간 흐름을 대표하는 한 장으로 변환합니다.'}</small>
+                    <small>{gifOutputMode === 'sheet' ? `기본값은 최대 ${MAX_GIF_SHEET_FRAMES}프레임 시트입니다. 파일별로 대표 프레임으로 바꿀 수 있습니다.` : '기본값은 대표 프레임 1장입니다. 파일별로 프레임 시트로 바꿀 수 있습니다.'}</small>
                   </label>
                 </div>
                 <div className="warning-box">
@@ -1358,7 +1620,7 @@ function App() {
             {hasSvgInput ? (
               <div className="warning-box">
                 <strong>SVG 래스터라이즈 안내</strong>
-                <p>SVG는 width/height와 viewBox를 우선 읽어 픽셀 크기를 정합니다. 정보가 부족한 파일은 1024px 기준으로 안전하게 처리하며, JPG로 저장하면 배경이 흰색으로 채워집니다.</p>
+                <p>SVG는 width/height와 viewBox를 우선 읽어 픽셀 크기를 정합니다. 정보가 부족한 파일은 1024px 기준으로 안전하게 처리하고, 파일별로 선명도 우선/속도 우선도 조절할 수 있습니다. JPG로 저장하면 배경은 흰색으로 채워집니다.</p>
               </div>
             ) : null}
 
@@ -1384,6 +1646,22 @@ function App() {
                   </label>
                 </div>
               </>
+            ) : null}
+
+            {batchProgress ? (
+              <div className="progress-box" aria-live="polite">
+                <div className="progress-head">
+                  <strong>{isProcessing ? '일괄 처리 진행 중' : '최근 처리 결과'}</strong>
+                  <span>{batchProgress.completedFiles} / {batchProgress.totalFiles}개 파일</span>
+                </div>
+                <div className="progress-bar" role="progressbar" aria-valuenow={batchProgressPercent} aria-valuemin={0} aria-valuemax={100}>
+                  <span style={{ width: `${batchProgressPercent}%` }} />
+                </div>
+                <p>
+                  {batchProgress.currentFileName ? `${batchProgress.currentFileName} · ${batchProgress.currentMessage}` : batchProgress.currentMessage}
+                </p>
+                <small>성공 {batchProgress.successFiles}개 · 실패 {batchProgress.failedFiles}개</small>
+              </div>
             ) : null}
 
             {notice ? <p className="notice-text">{notice}</p> : null}
@@ -1421,8 +1699,9 @@ function App() {
           {results.length ? (
             <div className="result-box">
               <strong>처리 완료</strong>
-              <p>완료 파일 수: {results.length}개</p>
+              <p>생성 결과 수: {results.length}개</p>
               <p>출력 형식: {mimeToLabel(results[0].mimeType)}</p>
+              {batchProgress ? <p>성공 {batchProgress.successFiles}개 · 실패 {batchProgress.failedFiles}개</p> : null}
               <button type="button" className="secondary-button full-width" onClick={downloadAllAsZip}>
                 ZIP으로 전체 다운로드
               </button>
@@ -1461,17 +1740,21 @@ function App() {
             </div>
           </div>
           <div className="results-list">
-            {results.map((item) => (
-              <article key={item.id} className="result-row">
-                <div>
-                  <strong>{item.filename}</strong>
-                  <p>{mimeToLabel(item.mimeType)} · {item.width} × {item.height}px · {item.sizeLabel} · {item.reductionText}</p>
-                </div>
-                <button type="button" className="secondary-button" onClick={() => downloadOne(item)}>
-                  개별 다운로드
-                </button>
-              </article>
-            ))}
+            {results.map((item) => {
+              const sourceName = sourceItems.find((source) => source.id === item.sourceId)?.file.name
+              return (
+                <article key={item.id} className="result-row">
+                  <div>
+                    <strong>{item.filename}</strong>
+                    <p>{mimeToLabel(item.mimeType)} · {item.width} × {item.height}px · {item.sizeLabel} · {item.reductionText}</p>
+                    {sourceName ? <small>원본: {sourceName}</small> : null}
+                  </div>
+                  <button type="button" className="secondary-button" onClick={() => downloadOne(item)}>
+                    개별 다운로드
+                  </button>
+                </article>
+              )
+            })}
           </div>
         </section>
       ) : null}
