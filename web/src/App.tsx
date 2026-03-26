@@ -154,7 +154,7 @@ async function renderPdfPageToPngBlob(file: File, pageNumber = 1) {
   canvas.height = Math.ceil(viewport.height)
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('PDF 렌더링을 지원하지 않습니다.')
-  await page.render({ canvasContext: ctx, viewport }).promise
+  await page.render({ canvas: null, canvasContext: ctx, viewport }).promise
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png', 1))
   if (!blob) throw new Error('PDF 미리보기를 만들지 못했습니다.')
   return { blob, pageCount: pdf.numPages, width: canvas.width, height: canvas.height }
@@ -199,8 +199,7 @@ async function prepareSourceItem(file: File): Promise<SourceItem> {
   }
 
   if (mimeType === 'image/gif') {
-    const bytes = new Uint8Array(await file.arrayBuffer())
-    const parsed = parseGIF(bytes)
+    const parsed = parseGIF(await file.arrayBuffer())
     const frames = decompressFrames(parsed, false)
     const previewUrl = URL.createObjectURL(file)
     const image = await loadImageFromBlob(file)
@@ -479,7 +478,7 @@ function App() {
       setResizeHeight(String(supported[0].height))
       setNotice(`${supported.length}개 파일을 불러왔습니다.${unsupportedNames.length ? ` 지원하지 않는 파일 ${unsupportedNames.length}개는 제외했습니다.` : ''}`)
     } else {
-      setError('현재는 JPG, PNG, WEBP, BMP, GIF, SVG 파일만 지원합니다.')
+      setError('현재는 JPG, PNG, WEBP, BMP, GIF, SVG, HEIC/HEIF, PDF 파일을 지원합니다.')
     }
 
     if (event.target) event.target.value = ''
@@ -632,7 +631,7 @@ function App() {
               </div>
               <div className="proof-row compact-proof-row">
                 <span className="proof-chip">여러 파일 일괄 처리</span>
-                <span className="proof-chip">BMP / GIF / SVG 지원</span>
+                <span className="proof-chip">BMP / GIF / SVG / HEIC / PDF 지원</span>
                 <span className="proof-chip">ZIP 다운로드</span>
               </div>
             </div>
@@ -682,7 +681,7 @@ function App() {
             </div>
 
             <label className="upload-box">
-              <input type="file" multiple accept="image/png,image/jpeg,image/webp,image/bmp,image/gif,image/svg+xml,.png,.jpg,.jpeg,.webp,.bmp,.gif,.svg" onChange={handleFileChange} hidden />
+              <input type="file" multiple accept="image/png,image/jpeg,image/webp,image/bmp,image/gif,image/svg+xml,image/heic,image/heif,application/pdf,.png,.jpg,.jpeg,.webp,.bmp,.gif,.svg,.heic,.heif,.pdf" onChange={handleFileChange} hidden />
               <strong>여러 이미지 파일 업로드</strong>
               <span>JPG, PNG, WEBP, BMP, GIF, SVG, HEIC, PDF 파일을 여러 개 한 번에 올릴 수 있습니다.</span>
             </label>
@@ -864,7 +863,7 @@ function App() {
           </div>
           <div className="workspace-mini-stats">
             <span>JPG / PNG / WEBP</span>
-            <span>BMP / GIF / SVG</span>
+            <span>BMP / GIF / SVG / HEIC / PDF</span>
             <span>일괄 변환 / ZIP 다운로드</span>
           </div>
         </div>
@@ -878,7 +877,7 @@ function App() {
           <ul className="bullet-list tight">
             <li>여러 파일 일괄 변환</li>
             <li>WEBP / JPG / PNG 상호 변환</li>
-            <li>BMP / GIF / SVG 입력 지원</li>
+            <li>BMP / GIF / SVG / HEIC / HEIF / PDF 입력 지원</li>
             <li>압축 품질 조절 및 비율 유지 리사이즈</li>
           </ul>
         </article>
