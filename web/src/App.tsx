@@ -9,6 +9,7 @@ import { guides, siteInfo, staticPages, type Guide } from './siteContent'
 
 type ToolMode = 'convert' | 'optimize'
 type TargetFormat = 'image/jpeg' | 'image/png' | 'image/webp'
+type GifOutputMode = 'poster' | 'sheet'
 
 const SUPPORTED_INPUT_MIME_TYPES = [
   'image/png',
@@ -52,6 +53,10 @@ const FILE_INPUT_ACCEPT = [
 
 const SUPPORTED_INPUT_COPY = 'JPG, PNG, WEBP, BMP, GIF, SVG, HEIC/HEIF, PDF, TIFF, PSD'
 const RAW_INPUT_COPY = 'RAW(NEF/CR2/ARW/DNG 등)는 아직 미지원'
+const SVG_FALLBACK_SIZE = 1024
+const SVG_RENDER_OVERSAMPLE = 2
+const MAX_VECTOR_RENDER_DIMENSION = 4096
+const MAX_GIF_SHEET_FRAMES = 12
 
 const RAW_FILE_EXTENSIONS = new Set([
   '.3fr',
@@ -76,6 +81,16 @@ const RAW_FILE_EXTENSIONS = new Set([
   '.x3f',
 ])
 
+const SVG_LENGTH_UNITS_TO_PX: Record<string, number> = {
+  px: 1,
+  pt: 96 / 72,
+  pc: 16,
+  mm: 96 / 25.4,
+  cm: 96 / 2.54,
+  in: 96,
+  q: 96 / 101.6,
+}
+
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
 type SourceItem = {
@@ -88,6 +103,7 @@ type SourceItem = {
   mimeType: string
   pageCount?: number
   animated?: boolean
+  frameCount?: number
   note?: string
   workingBlob?: Blob
 }
@@ -103,6 +119,21 @@ type ConvertedItem = {
   reductionText: string
   url: string
   blob: Blob
+}
+
+type SvgRasterMeta = {
+  width: number
+  height: number
+  usedViewBox: boolean
+  usedFallbackSize: boolean
+  hadExplicitSize: boolean
+  serialized: string
+}
+
+type CompositedGifFrame = {
+  index: number
+  delay: number
+  imageData: ImageData
 }
 
 function normalizePath(pathname: string) {
@@ -214,6 +245,136 @@ function formatReduction(before: number, after: number) {
   return diff < 0 ? `${Math.abs(diff)}% 감소` : `${diff}% 증가`
 }
 
+function getCanvasContext(canvas: HTMLCanvasElement, errorMessage: string) {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error(errorMessage)
+  return ctx
+}
+
+function applyHighQualitySmoothing(ctx: CanvasRenderingContext2D) {
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+}
+
+function clampDimension(value: number, fallback = 1) {
+  if (!Number.isFinite(value) || value <= 0) return fallback
+  return Math.max(1, Math.round(value))
+}
+
+function parseSvgLength(value: string | null) {
+  if (!value) return null
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.endsWith('%')) return null
+
+  const match = trimmed.match(/^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*([a-z%]*)$/i)
+  if (!match) return null
+
+  const amount = Number(match[1])
+  if (!Number.isFinite(amount) || amount <= 0) return null
+
+  const unit = (match[2] || 'px').toLowerCase()
+  const multiplier = SVG_LENGTH_UNITS_TO_PX[unit]
+  if (!multiplier) return null
+  return amount * multiplier
+}
+
+function parseSvgViewBox(value: string | null) {
+  if (!value) return null
+  const parts = value
+    .trim()
+    .split(/[\s,]+/)
+    .map((entry) => Number(entry))
+
+  if (parts.length !== 4 || parts.some((entry) => !Number.isFinite(entry))) return null
+  const [, , width, height] = parts
+  if (width <= 0 || height <= 0) return null
+  return { width, height }
+}
+
+function prepareSvgForRasterization(svgText: string): SvgRasterMeta {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(svgText, 'image/svg+xml')
+  if (doc.querySelector('parsererror')) {
+    throw new Error('SVG 구조를 읽지 못했습니다.')
+  }
+
+  const svg = doc.documentElement
+  if (svg.tagName.toLowerCase() !== 'svg') {
+    throw new Error('올바른 SVG 파일이 아닙니다.')
+  }
+
+  const explicitWidth = parseSvgLength(svg.getAttribute('width'))
+  const explicitHeight = parseSvgLength(svg.getAttribute('height'))
+  const viewBox = parseSvgViewBox(svg.getAttribute('viewBox'))
+
+  let width = explicitWidth
+  let height = explicitHeight
+  let usedViewBox = false
+  let usedFallbackSize = false
+
+  if ((!width || !height) && viewBox) {
+    if (!width && !height) {
+      width = viewBox.width
+      height = viewBox.height
+    } else if (!width && height) {
+      width = height * (viewBox.width / viewBox.height)
+    } else if (width && !height) {
+      height = width * (viewBox.height / viewBox.width)
+    }
+    usedViewBox = true
+  }
+
+  if (!width || !height) {
+    if (width && !height) {
+      height = width
+    } else if (!width && height) {
+      width = height
+    } else {
+      width = SVG_FALLBACK_SIZE
+      height = SVG_FALLBACK_SIZE
+    }
+    usedFallbackSize = true
+  }
+
+  const normalizedWidth = clampDimension(width)
+  const normalizedHeight = clampDimension(height)
+
+  svg.setAttribute('xmlns', svg.getAttribute('xmlns') || 'http://www.w3.org/2000/svg')
+  if (!svg.getAttribute('xmlns:xlink')) {
+    svg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
+  }
+  if (!svg.getAttribute('viewBox')) {
+    svg.setAttribute('viewBox', `0 0 ${normalizedWidth} ${normalizedHeight}`)
+  }
+  if (!svg.getAttribute('preserveAspectRatio')) {
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+  }
+
+  svg.setAttribute('width', String(normalizedWidth))
+  svg.setAttribute('height', String(normalizedHeight))
+
+  const serialized = new XMLSerializer().serializeToString(svg)
+
+  return {
+    width: normalizedWidth,
+    height: normalizedHeight,
+    usedViewBox,
+    usedFallbackSize,
+    hadExplicitSize: Boolean(explicitWidth && explicitHeight),
+    serialized,
+  }
+}
+
+function buildSvgNote(meta: SvgRasterMeta) {
+  if (meta.usedFallbackSize) {
+    return `SVG 크기 정보가 부족해 ${meta.width}×${meta.height}px 기준으로 래스터라이즈합니다. 결과가 다르면 원본 SVG에 width/height 또는 viewBox를 넣어 주세요.`
+  }
+  if (meta.usedViewBox && !meta.hadExplicitSize) {
+    return `SVG는 viewBox를 기준으로 ${meta.width}×${meta.height}px 크기를 잡아 변환합니다.`
+  }
+  return `SVG는 ${meta.width}×${meta.height}px 기준으로 선명하게 래스터라이즈합니다.`
+}
+
 async function loadImageFromBlob(blob: Blob) {
   const objectUrl = URL.createObjectURL(blob)
   try {
@@ -221,6 +382,7 @@ async function loadImageFromBlob(blob: Blob) {
       const el = new Image()
       el.onload = () => resolve(el)
       el.onerror = () => reject(new Error('이미지를 불러오지 못했습니다.'))
+      el.decoding = 'async'
       el.src = objectUrl
     })
     return img
@@ -239,8 +401,7 @@ async function rgbaToPngBlob(rgba: Uint8Array, width: number, height: number) {
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
-  const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('브라우저에서 TIFF 처리를 지원하지 않습니다.')
+  const ctx = getCanvasContext(canvas, '브라우저에서 TIFF 처리를 지원하지 않습니다.')
 
   const data = new Uint8ClampedArray(rgba.byteLength)
   data.set(rgba)
@@ -255,8 +416,7 @@ async function renderPdfPageToPngBlob(file: File, pageNumber = 1) {
   const canvas = document.createElement('canvas')
   canvas.width = Math.ceil(viewport.width)
   canvas.height = Math.ceil(viewport.height)
-  const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('PDF 렌더링을 지원하지 않습니다.')
+  const ctx = getCanvasContext(canvas, 'PDF 렌더링을 지원하지 않습니다.')
   await page.render({ canvas: null, canvasContext: ctx, viewport }).promise
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png', 1))
   if (!blob) throw new Error('PDF 미리보기를 만들지 못했습니다.')
@@ -307,6 +467,162 @@ async function renderPsdToPngBlob(file: File) {
     width: psd.width ?? canvas.width,
     height: psd.height ?? canvas.height,
   }
+}
+
+function normalizeGifDelay(delay: number) {
+  return delay > 0 ? delay : 100
+}
+
+async function readGifFrames(file: File) {
+  const parsed = parseGIF(await file.arrayBuffer())
+  const frames = decompressFrames(parsed, true)
+  return {
+    width: parsed.lsd.width,
+    height: parsed.lsd.height,
+    frames,
+  }
+}
+
+function sampleGifFrames(frames: CompositedGifFrame[], limit = MAX_GIF_SHEET_FRAMES) {
+  if (frames.length <= limit) return frames
+
+  const sampled: CompositedGifFrame[] = []
+  const usedIndexes = new Set<number>()
+  const step = (frames.length - 1) / (limit - 1)
+
+  for (let i = 0; i < limit; i += 1) {
+    const index = Math.round(i * step)
+    if (!usedIndexes.has(index)) {
+      sampled.push(frames[index])
+      usedIndexes.add(index)
+    }
+  }
+
+  return sampled.sort((a, b) => a.index - b.index)
+}
+
+function selectRepresentativeGifFrame(frames: CompositedGifFrame[]) {
+  if (frames.length <= 1) return frames[0]
+
+  const totalDuration = frames.reduce((sum, frame) => sum + normalizeGifDelay(frame.delay), 0)
+  const midpoint = totalDuration / 2
+  let cursor = 0
+
+  for (const frame of frames) {
+    cursor += normalizeGifDelay(frame.delay)
+    if (cursor >= midpoint) return frame
+  }
+
+  return frames[frames.length - 1]
+}
+
+async function composeGifFrames(file: File) {
+  const gif = await readGifFrames(file)
+  const canvas = document.createElement('canvas')
+  canvas.width = gif.width
+  canvas.height = gif.height
+  const ctx = getCanvasContext(canvas, 'GIF 프레임을 합성하지 못했습니다.')
+
+  const patchCanvas = document.createElement('canvas')
+  const patchCtx = getCanvasContext(patchCanvas, 'GIF 프레임을 그리지 못했습니다.')
+  const composedFrames: CompositedGifFrame[] = []
+
+  for (let index = 0; index < gif.frames.length; index += 1) {
+    const frame = gif.frames[index]
+    const snapshotBeforeDraw = frame.disposalType === 3 ? ctx.getImageData(0, 0, gif.width, gif.height) : null
+
+    patchCanvas.width = frame.dims.width
+    patchCanvas.height = frame.dims.height
+    const patchImageData = new ImageData(new Uint8ClampedArray(frame.patch), frame.dims.width, frame.dims.height)
+    patchCtx.putImageData(patchImageData, 0, 0)
+    ctx.drawImage(patchCanvas, frame.dims.left, frame.dims.top)
+
+    composedFrames.push({
+      index,
+      delay: normalizeGifDelay(frame.delay),
+      imageData: ctx.getImageData(0, 0, gif.width, gif.height),
+    })
+
+    if (frame.disposalType === 2) {
+      ctx.clearRect(frame.dims.left, frame.dims.top, frame.dims.width, frame.dims.height)
+    } else if (frame.disposalType === 3 && snapshotBeforeDraw) {
+      ctx.putImageData(snapshotBeforeDraw, 0, 0)
+    }
+  }
+
+  return {
+    width: gif.width,
+    height: gif.height,
+    frames: composedFrames,
+  }
+}
+
+async function renderGifRepresentativeFrame(file: File, outputWidth?: number, outputHeight?: number) {
+  const { width, height, frames } = await composeGifFrames(file)
+  if (!frames.length) throw new Error('GIF 프레임을 읽지 못했습니다.')
+
+  const frame = selectRepresentativeGifFrame(frames)
+  const canvas = document.createElement('canvas')
+  canvas.width = outputWidth ?? width
+  canvas.height = outputHeight ?? height
+  const ctx = getCanvasContext(canvas, 'GIF 대표 프레임을 만들지 못했습니다.')
+  applyHighQualitySmoothing(ctx)
+
+  const frameCanvas = document.createElement('canvas')
+  frameCanvas.width = width
+  frameCanvas.height = height
+  const frameCtx = getCanvasContext(frameCanvas, 'GIF 프레임 캔버스를 만들지 못했습니다.')
+  frameCtx.putImageData(frame.imageData, 0, 0)
+  ctx.drawImage(frameCanvas, 0, 0, canvas.width, canvas.height)
+
+  return { blob: await canvasToPngBlob(canvas), width: canvas.width, height: canvas.height }
+}
+
+async function renderGifFrameSheet(file: File, outputWidth?: number, outputHeight?: number) {
+  const { width, height, frames } = await composeGifFrames(file)
+  if (!frames.length) throw new Error('GIF 프레임을 읽지 못했습니다.')
+
+  const sampledFrames = sampleGifFrames(frames)
+  const columns = Math.min(4, sampledFrames.length)
+  const rows = Math.ceil(sampledFrames.length / columns)
+  const padding = 16
+  const labelHeight = 28
+  const tileWidth = outputWidth ?? width
+  const tileHeight = outputHeight ?? height
+
+  const canvas = document.createElement('canvas')
+  canvas.width = columns * tileWidth + padding * (columns + 1)
+  canvas.height = rows * (tileHeight + labelHeight) + padding * (rows + 1)
+  const ctx = getCanvasContext(canvas, 'GIF 프레임 시트를 만들지 못했습니다.')
+  applyHighQualitySmoothing(ctx)
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.textBaseline = 'middle'
+  ctx.font = '12px system-ui, -apple-system, BlinkMacSystemFont, sans-serif'
+
+  const frameCanvas = document.createElement('canvas')
+  frameCanvas.width = width
+  frameCanvas.height = height
+  const frameCtx = getCanvasContext(frameCanvas, 'GIF 프레임 캔버스를 만들지 못했습니다.')
+
+  sampledFrames.forEach((frame, index) => {
+    const column = index % columns
+    const row = Math.floor(index / columns)
+    const x = padding + column * (tileWidth + padding)
+    const y = padding + row * (tileHeight + labelHeight + padding)
+
+    ctx.save()
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.08)'
+    ctx.fillRect(x, y, tileWidth, tileHeight)
+    ctx.restore()
+
+    frameCtx.putImageData(frame.imageData, 0, 0)
+    ctx.drawImage(frameCanvas, x, y, tileWidth, tileHeight)
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)'
+    ctx.fillText(`프레임 ${frame.index + 1} · ${frame.delay}ms`, x + 2, y + tileHeight + labelHeight / 2)
+  })
+
+  return { blob: await canvasToPngBlob(canvas), width: canvas.width, height: canvas.height }
 }
 
 async function prepareSourceItem(file: File): Promise<SourceItem> {
@@ -381,20 +697,36 @@ async function prepareSourceItem(file: File): Promise<SourceItem> {
   }
 
   if (mimeType === 'image/gif') {
-    const parsed = parseGIF(await file.arrayBuffer())
-    const frames = decompressFrames(parsed, false)
+    const gif = await readGifFrames(file)
     const previewUrl = URL.createObjectURL(file)
-    const image = await loadImageFromBlob(file)
     return {
       id,
       file,
       previewUrl,
-      width: image.naturalWidth,
-      height: image.naturalHeight,
+      width: gif.width,
+      height: gif.height,
       sizeLabel: formatBytes(file.size),
       mimeType,
-      animated: frames.length > 1,
-      note: frames.length > 1 ? '애니메이션 GIF는 현재 첫 프레임 기준으로 변환합니다.' : undefined,
+      animated: gif.frames.length > 1,
+      frameCount: gif.frames.length,
+      note: gif.frames.length > 1 ? `애니메이션 GIF ${gif.frames.length}프레임을 감지했습니다. 대표 프레임 또는 프레임 시트로 변환할 수 있습니다.` : '정적 GIF 파일입니다.',
+    }
+  }
+
+  if (mimeType === 'image/svg+xml') {
+    const svgMeta = prepareSvgForRasterization(await file.text())
+    const svgBlob = new Blob([svgMeta.serialized], { type: 'image/svg+xml;charset=utf-8' })
+    const previewUrl = URL.createObjectURL(svgBlob)
+    return {
+      id,
+      file,
+      previewUrl,
+      width: svgMeta.width,
+      height: svgMeta.height,
+      sizeLabel: formatBytes(file.size),
+      mimeType,
+      workingBlob: svgBlob,
+      note: buildSvgNote(svgMeta),
     }
   }
 
@@ -411,6 +743,18 @@ async function prepareSourceItem(file: File): Promise<SourceItem> {
   }
 }
 
+async function convertGifToWorkingBlob(options: {
+  source: SourceItem
+  resizeWidth?: number
+  resizeHeight?: number
+  gifOutputMode: GifOutputMode
+}) {
+  if (options.gifOutputMode === 'sheet') {
+    return renderGifFrameSheet(options.source.file, options.resizeWidth, options.resizeHeight)
+  }
+  return renderGifRepresentativeFrame(options.source.file, options.resizeWidth, options.resizeHeight)
+}
+
 async function convertFile(options: {
   source: SourceItem
   targetFormat: TargetFormat
@@ -418,7 +762,42 @@ async function convertFile(options: {
   resizeWidth?: number
   resizeHeight?: number
   pdfPageNumber?: number
+  gifOutputMode: GifOutputMode
 }) {
+  if (options.source.mimeType === 'image/gif' && options.source.animated) {
+    const gifRendered = await convertGifToWorkingBlob({
+      source: options.source,
+      resizeWidth: options.resizeWidth,
+      resizeHeight: options.resizeHeight,
+      gifOutputMode: options.gifOutputMode,
+    })
+
+    if (options.targetFormat === 'image/png') {
+      return gifRendered
+    }
+
+    const image = await loadImageFromBlob(gifRendered.blob)
+    const canvas = document.createElement('canvas')
+    canvas.width = gifRendered.width
+    canvas.height = gifRendered.height
+    const ctx = getCanvasContext(canvas, '브라우저에서 이미지 변환을 지원하지 않습니다.')
+    applyHighQualitySmoothing(ctx)
+
+    if (options.targetFormat === 'image/jpeg') {
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+    }
+
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, options.targetFormat, options.quality)
+    })
+
+    if (!blob) throw new Error('변환 결과를 만들지 못했습니다.')
+    return { blob, width: canvas.width, height: canvas.height }
+  }
+
   let inputBlob: Blob = options.source.workingBlob ?? options.source.file
   if (options.source.mimeType === 'application/pdf') {
     const rendered = await renderPdfPageToPngBlob(options.source.file, options.pdfPageNumber ?? 1)
@@ -432,15 +811,32 @@ async function convertFile(options: {
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
-  const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('브라우저에서 이미지 변환을 지원하지 않습니다.')
+  const ctx = getCanvasContext(canvas, '브라우저에서 이미지 변환을 지원하지 않습니다.')
+  applyHighQualitySmoothing(ctx)
 
   if (options.targetFormat === 'image/jpeg') {
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, width, height)
   }
 
-  ctx.drawImage(image, 0, 0, width, height)
+  if (options.source.mimeType === 'image/svg+xml') {
+    const renderWidth = Math.min(MAX_VECTOR_RENDER_DIMENSION, clampDimension(width * SVG_RENDER_OVERSAMPLE))
+    const renderHeight = Math.min(MAX_VECTOR_RENDER_DIMENSION, clampDimension(height * SVG_RENDER_OVERSAMPLE))
+
+    if (renderWidth > width || renderHeight > height) {
+      const rasterCanvas = document.createElement('canvas')
+      rasterCanvas.width = renderWidth
+      rasterCanvas.height = renderHeight
+      const rasterCtx = getCanvasContext(rasterCanvas, 'SVG 래스터라이즈 캔버스를 만들지 못했습니다.')
+      applyHighQualitySmoothing(rasterCtx)
+      rasterCtx.drawImage(image, 0, 0, renderWidth, renderHeight)
+      ctx.drawImage(rasterCanvas, 0, 0, width, height)
+    } else {
+      ctx.drawImage(image, 0, 0, width, height)
+    }
+  } else {
+    ctx.drawImage(image, 0, 0, width, height)
+  }
 
   const blob = await new Promise<Blob | null>((resolve) => {
     canvas.toBlob(resolve, options.targetFormat, options.quality)
@@ -545,6 +941,7 @@ function App() {
   const [keepAspectRatio, setKeepAspectRatio] = useState(true)
   const [resizeWidth, setResizeWidth] = useState('')
   const [resizeHeight, setResizeHeight] = useState('')
+  const [gifOutputMode, setGifOutputMode] = useState<GifOutputMode>('poster')
   const [results, setResults] = useState<ConvertedItem[]>([])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -557,6 +954,8 @@ function App() {
   const originalMime = firstSource?.mimeType ?? ''
   const targetLabel = mimeToLabel(targetFormat)
   const originalLabel = originalMime ? mimeToLabel(originalMime) : '알 수 없음'
+  const hasAnimatedGif = sourceItems.some((item) => item.animated)
+  const hasSvgInput = sourceItems.some((item) => item.mimeType === 'image/svg+xml')
   const isTransparentToJpg = targetFormat === 'image/jpeg' && (originalMime === 'image/png' || originalMime === 'image/webp' || originalMime === 'image/gif' || originalMime === 'image/svg+xml' || originalMime === 'image/tiff' || originalMime === 'image/vnd.adobe.photoshop')
   const qualityDisabled = targetFormat === 'image/png'
   const qualityHelper = qualityDisabled
@@ -627,6 +1026,7 @@ function App() {
     setResults([])
     setResizeWidth('')
     setResizeHeight('')
+    setGifOutputMode('poster')
   }
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -662,10 +1062,14 @@ function App() {
       setResizeWidth(String(supported[0].width))
       setResizeHeight(String(supported[0].height))
 
+      const animatedGifCount = supported.filter((item) => item.animated).length
+      const svgCount = supported.filter((item) => item.mimeType === 'image/svg+xml').length
       const excludedMessages = [
         rawNames.length ? `RAW ${rawNames.length}개는 아직 지원하지 않아 제외했습니다.` : '',
         unsupportedNames.length ? `미지원 파일 ${unsupportedNames.length}개는 제외했습니다.` : '',
         unreadableNames.length ? `읽지 못한 파일 ${unreadableNames.length}개는 제외했습니다.` : '',
+        animatedGifCount ? `애니메이션 GIF ${animatedGifCount}개는 대표 프레임 또는 프레임 시트로 처리할 수 있습니다.` : '',
+        svgCount ? `SVG ${svgCount}개는 viewBox/크기 정보를 읽어 안정적으로 래스터라이즈합니다.` : '',
       ].filter(Boolean)
 
       setNotice(`${supported.length}개 파일을 불러왔습니다.${excludedMessages.length ? ` ${excludedMessages.join(' ')}` : ''}`)
@@ -739,6 +1143,7 @@ function App() {
               resizeWidth: parsedWidth,
               resizeHeight: parsedHeight,
               pdfPageNumber: pageNumber,
+              gifOutputMode,
             })
             const url = URL.createObjectURL(converted.blob)
             nextResults.push({
@@ -761,12 +1166,14 @@ function App() {
             quality,
             resizeWidth: parsedWidth,
             resizeHeight: parsedHeight,
+            gifOutputMode,
           })
           const url = URL.createObjectURL(converted.blob)
+          const gifSuffix = item.mimeType === 'image/gif' && item.animated ? (gifOutputMode === 'sheet' ? '-framesheet' : '-poster') : '-converted'
           nextResults.push({
             id: `${item.id}-${targetFormat}`,
             sourceId: item.id,
-            filename: `${fileNameWithoutExtension(item.file.name)}-converted.${mimeToExtension(targetFormat)}`,
+            filename: `${fileNameWithoutExtension(item.file.name)}${gifSuffix}.${mimeToExtension(targetFormat)}`,
             sizeLabel: formatBytes(converted.blob.size),
             mimeType: targetFormat,
             width: converted.width,
@@ -891,7 +1298,7 @@ function App() {
                       <span>
                         {mimeToLabel(item.mimeType)} · {item.sizeLabel}
                         {item.pageCount ? ` · ${item.pageCount}페이지` : ''}
-                        {item.animated ? ' · 애니메이션 감지' : ''}
+                        {item.animated ? ` · 애니메이션 ${item.frameCount ?? 0}프레임` : ''}
                       </span>
                       {item.note ? <small>{item.note}</small> : null}
                     </div>
@@ -925,10 +1332,33 @@ function App() {
               </div>
             ) : null}
 
-            {sourceItems.some((item) => item.animated) ? (
+            {hasAnimatedGif ? (
+              <>
+                <div className="field-grid">
+                  <label className="field">
+                    <span>애니메이션 GIF 처리 방식</span>
+                    <select value={gifOutputMode} onChange={(event) => setGifOutputMode(event.target.value as GifOutputMode)}>
+                      <option value="poster">대표 프레임 1장으로 변환</option>
+                      <option value="sheet">프레임 시트 1장으로 정리</option>
+                    </select>
+                    <small>{gifOutputMode === 'sheet' ? `최대 ${MAX_GIF_SHEET_FRAMES}프레임을 한 장에 정리합니다.` : '애니메이션 전체는 유지되지 않고, 중간 흐름을 대표하는 한 장으로 변환합니다.'}</small>
+                  </label>
+                </div>
+                <div className="warning-box">
+                  <strong>애니메이션 GIF 안내</strong>
+                  <p>
+                    {gifOutputMode === 'sheet'
+                      ? `애니메이션 GIF는 전체 재생 파일로 바꾸지 않고, 최대 ${MAX_GIF_SHEET_FRAMES}프레임을 한 장의 시트로 정리합니다.`
+                      : '애니메이션 GIF는 단순 첫 프레임이 아니라, 합성된 대표 프레임 1장을 골라 변환합니다.'}
+                  </p>
+                </div>
+              </>
+            ) : null}
+
+            {hasSvgInput ? (
               <div className="warning-box">
-                <strong>애니메이션 GIF 안내</strong>
-                <p>애니메이션 GIF는 현재 첫 프레임 기준으로 변환합니다. 전체 애니메이션 보존 변환은 다음 단계에서 추가할 예정입니다.</p>
+                <strong>SVG 래스터라이즈 안내</strong>
+                <p>SVG는 width/height와 viewBox를 우선 읽어 픽셀 크기를 정합니다. 정보가 부족한 파일은 1024px 기준으로 안전하게 처리하며, JPG로 저장하면 배경이 흰색으로 채워집니다.</p>
               </div>
             ) : null}
 
@@ -980,6 +1410,7 @@ function App() {
               <li>첫 파일 형식: {originalLabel}</li>
               <li>출력 형식: {targetLabel}</li>
               <li>처리 모드: {mode === 'convert' ? '포맷 변환' : '압축 / 리사이즈'}</li>
+              {hasAnimatedGif ? <li>GIF 처리: {gifOutputMode === 'sheet' ? '프레임 시트 1장' : '대표 프레임 1장'}</li> : null}
               <li>지원 입력: {SUPPORTED_INPUT_COPY}</li>
               <li>{RAW_INPUT_COPY}</li>
             </ul>
