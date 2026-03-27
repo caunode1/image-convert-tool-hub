@@ -1085,6 +1085,23 @@ function App() {
       ? '용량을 많이 줄이고 싶다면 70~85%부터 비교해 보시는 것을 권장합니다.'
       : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다. HEIC, PDF, TIFF, PSD는 내부적으로 브라우저용 이미지로 바꾼 뒤 출력합니다.'
   const batchProgressPercent = batchProgress ? Math.round((batchProgress.completedFiles / Math.max(1, batchProgress.totalFiles)) * 100) : 0
+  const hasFiles = sourceItems.length > 0
+  const hasResults = results.length > 0
+  const currentFlowStep = hasResults ? 4 : hasFiles ? (isProcessing ? 3 : 2) : 1
+  const flowSummaryTitle = hasResults
+    ? '4. 결과 다운로드'
+    : hasFiles
+      ? isProcessing
+        ? '3. 변환 진행 중'
+        : '2. 설정 확인'
+      : '1. 파일 업로드'
+  const flowSummaryText = hasResults
+    ? '결과 목록과 ZIP 다운로드 버튼이 준비됐습니다.'
+    : hasFiles
+      ? isProcessing
+        ? '파일별 상태를 순서대로 처리하고 있습니다.'
+        : '출력 형식과 품질을 확인한 뒤 변환 버튼을 누르세요.'
+      : '왼쪽 업로드 박스를 눌러 여러 파일을 먼저 선택하세요.'
 
   const getGifOutputModeForItem = (item: SourceItem) => fileOptions[item.id]?.gifOutputMode ?? gifOutputMode
   const getSvgRasterScaleForItem = (item: SourceItem): SvgRasterScale => fileOptions[item.id]?.svgRasterScale ?? DEFAULT_SVG_RASTER_SCALE
@@ -1513,47 +1530,67 @@ function App() {
           {compact ? (
             <div className="workspace-heading compact-workspace-heading">
               <div>
-                <p className="eyebrow">Quick convert</p>
+                <p className="eyebrow">빠른 변환</p>
                 <h1>이미지 변환 / 압축 도구</h1>
-                <p>여러 이미지 파일을 한 번에 올리고, 필요한 형식으로 묶어서 변환하실 수 있습니다.</p>
+                <p>업로드 → 설정 → 변환 → 다운로드 순서로 바로 끝낼 수 있게 정리했습니다.</p>
               </div>
               <div className="proof-row compact-proof-row">
-                <span className="proof-chip">여러 파일 일괄 처리</span>
-                <span className="proof-chip">BMP / GIF / SVG / HEIC / PDF / TIFF / PSD 지원</span>
-                <span className="proof-chip">ZIP 다운로드</span>
+                <span className="proof-chip">여러 파일 한 번에</span>
+                <span className="proof-chip">HEIC · PDF · TIFF · PSD 입력 지원</span>
+                <span className="proof-chip">ZIP 묶음 다운로드</span>
               </div>
             </div>
           ) : (
             <div className="workspace-heading">
               <div>
-                <p className="eyebrow">Tool</p>
+                <p className="eyebrow">작업 공간</p>
                 <h1>이미지 변환 / 압축 도구</h1>
-                <p>여러 파일을 한 번에 변환하고, 결과를 ZIP으로 묶어 받으실 수 있습니다.</p>
+                <p>파일을 올리고 설정만 확인하면 바로 일괄 변환할 수 있습니다.</p>
               </div>
             </div>
           )}
 
+          <div className="flow-strip" aria-label="작업 흐름">
+            {[
+              { step: 1, title: '업로드', detail: '파일 선택' },
+              { step: 2, title: '설정', detail: '형식 / 품질' },
+              { step: 3, title: '변환', detail: '일괄 처리' },
+              { step: 4, title: '다운로드', detail: '개별 / ZIP' },
+            ].map((item) => {
+              const stateClass = currentFlowStep === item.step ? 'is-current' : currentFlowStep > item.step ? 'is-done' : ''
+              return (
+                <div key={item.step} className={`flow-step ${stateClass}`.trim()}>
+                  <span className="flow-index">{item.step}</span>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <small>{item.detail}</small>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
           <section className="preset-panel compact-preset-panel">
             <div className="preset-panel-head">
-              <p className="eyebrow">빠른 작업</p>
-              <span>자주 쓰는 일괄 변환 작업을 바로 시작하실 수 있습니다.</span>
+              <p className="eyebrow">원클릭 프리셋</p>
+              <span>자주 쓰는 조합만 먼저 골라두었습니다.</span>
             </div>
             <div className="preset-grid">
               <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/jpeg', quality: 0.92 })}>
                 <strong>여러 파일 → JPG</strong>
-                <span>호환성 우선 / 사진 공유용</span>
+                <span>호환성 우선</span>
               </button>
               <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/png', quality: 1 })}>
                 <strong>여러 파일 → PNG</strong>
-                <span>그래픽/선명도 우선</span>
+                <span>선명도 우선</span>
               </button>
               <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/webp', quality: 0.86 })}>
                 <strong>여러 파일 → WEBP</strong>
-                <span>웹 업로드/용량 절약용</span>
+                <span>웹 업로드용</span>
               </button>
               <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'optimize', format: targetFormat, quality: 0.8, resizeEnabled: true })}>
                 <strong>일괄 압축 / 리사이즈</strong>
-                <span>여러 파일을 한 번에 줄입니다</span>
+                <span>용량부터 줄이기</span>
               </button>
             </div>
           </section>
@@ -1570,16 +1607,20 @@ function App() {
 
             <label className="upload-box">
               <input type="file" multiple accept={FILE_INPUT_ACCEPT} onChange={handleFileChange} hidden />
-              <strong>여러 이미지 파일 업로드</strong>
-              <span>{SUPPORTED_INPUT_COPY} 파일을 여러 개 한 번에 올릴 수 있습니다. {RAW_INPUT_COPY}</span>
+              <div className="upload-box-top">
+                <span className="upload-kicker">1. 업로드</span>
+                <span className="upload-cta">여기를 눌러 파일 선택</span>
+              </div>
+              <strong>여러 이미지 파일을 한 번에 올리기</strong>
+              <span>{SUPPORTED_INPUT_COPY} 지원 · {RAW_INPUT_COPY}</span>
             </label>
 
             {sourceItems.length ? (
               <div className="inline-info-card source-file-card">
                 <div className="source-file-card-head">
                   <div>
-                    <strong>{sourceItems.length}개 파일 준비 완료</strong>
-                    <p>입력 형식 예시: {[...new Set(sourceItems.map((item) => mimeToLabel(item.mimeType)))].join(', ')}</p>
+                    <strong>{sourceItems.length}개 파일 업로드 완료</strong>
+                    <p>입력 형식: {[...new Set(sourceItems.map((item) => mimeToLabel(item.mimeType)))].join(', ')}</p>
                   </div>
                   <span className="helper-pill">특수 파일은 아래에서 개별 설정</span>
                 </div>
@@ -1651,6 +1692,14 @@ function App() {
                 </div>
               </div>
             ) : null}
+
+            <div className="section-label">
+              <span className="section-step">2</span>
+              <div className="section-copy">
+                <strong>출력 설정</strong>
+                <small>형식, 품질, 크기를 고릅니다.</small>
+              </div>
+            </div>
 
             <div className="field-grid">
               <label className="field">
@@ -1727,6 +1776,14 @@ function App() {
               </>
             ) : null}
 
+            <div className="section-label action-section-label">
+              <span className="section-step">3</span>
+              <div className="section-copy">
+                <strong>{mode === 'convert' ? `${targetLabel}로 변환 실행` : '압축 / 리사이즈 실행'}</strong>
+                <small>설정이 맞으면 아래 버튼으로 바로 시작하세요.</small>
+              </div>
+            </div>
+
             {batchProgress ? (
               <div className="progress-box" aria-live="polite">
                 <div className="progress-head">
@@ -1759,25 +1816,38 @@ function App() {
           </form>
         </section>
 
-        <aside className="surface-card side-panel">
-          <h2>작업 요약</h2>
+        <aside className="surface-soft side-panel quiet-panel">
+          <div className="side-panel-intro">
+            <p className="eyebrow">status</p>
+            <h2>작업 요약</h2>
+            <p>왼쪽은 실제로 클릭하며 작업하는 공간이고, 오른쪽은 현재 상태를 보는 영역입니다.</p>
+          </div>
+
+          <div className="next-step-card">
+            <p className="card-kicker">지금 단계</p>
+            <strong>{flowSummaryTitle}</strong>
+            <p>{flowSummaryText}</p>
+          </div>
+
           {sourceItems.length ? (
-            <ul className="bullet-list tight">
-              <li>선택 파일 수: {sourceItems.length}개</li>
-              <li>첫 파일 형식: {originalLabel}</li>
-              <li>출력 형식: {targetLabel}</li>
-              <li>처리 모드: {mode === 'convert' ? '포맷 변환' : '압축 / 리사이즈'}</li>
-              {hasAnimatedGif ? <li>GIF 처리: {effectiveGifSummary.label}</li> : null}
-              <li>지원 입력: {SUPPORTED_INPUT_COPY}</li>
-              <li>{RAW_INPUT_COPY}</li>
-            </ul>
+            <div className="side-panel-block">
+              <ul className="bullet-list tight">
+                <li>선택 파일 수: {sourceItems.length}개</li>
+                <li>첫 파일 형식: {originalLabel}</li>
+                <li>출력 형식: {targetLabel}</li>
+                <li>처리 모드: {mode === 'convert' ? '포맷 변환' : '압축 / 리사이즈'}</li>
+                {hasAnimatedGif ? <li>GIF 처리: {effectiveGifSummary.label}</li> : null}
+                <li>지원 입력: {SUPPORTED_INPUT_COPY}</li>
+                <li>{RAW_INPUT_COPY}</li>
+              </ul>
+            </div>
           ) : (
-            <p>여러 파일을 올리면 여기서 일괄 작업 요약을 확인하실 수 있습니다.</p>
+            <p className="side-panel-note">여러 파일을 올리면 여기서 작업 상태를 빠르게 확인하실 수 있습니다.</p>
           )}
 
           {results.length ? (
             <div className="result-box">
-              <strong>처리 완료</strong>
+              <strong>4. 다운로드 준비 완료</strong>
               <p>생성 결과 수: {results.length}개</p>
               <p>출력 형식: {mimeToLabel(results[0].mimeType)}</p>
               {batchProgress ? <p>성공 {batchProgress.successFiles}개 · 실패 {batchProgress.failedFiles}개</p> : null}
@@ -1847,11 +1917,11 @@ function App() {
           <div>
             <p className="workspace-label">image utility</p>
             <h1>이미지 변환 툴 허브</h1>
-            <p className="workspace-subtitle">여러 이미지 파일을 한 번에 올리고, 필요한 형식으로 묶어서 변환하실 수 있는 툴 중심 구조로 정리했습니다.</p>
+            <p className="workspace-subtitle">업로드 → 설정 → 변환 → 다운로드 흐름이 먼저 보이도록 정리한 이미지 도구입니다.</p>
           </div>
           <div className="workspace-mini-stats">
-            <span>JPG / PNG / WEBP</span>
-            <span>BMP / GIF / SVG / HEIC / PDF / TIFF / PSD</span>
+            <span>JPG / PNG / WEBP 출력</span>
+            <span>HEIC / PDF / TIFF / PSD 입력</span>
             <span>일괄 변환 / ZIP 다운로드</span>
           </div>
         </div>
@@ -1859,24 +1929,24 @@ function App() {
       </section>
 
       <section className="utility-dock-grid">
-        <article className="surface-card dock-card">
-          <p className="card-kicker">지원 작업</p>
-          <h3>지금 바로 많이 쓰는 이미지 작업</h3>
+        <article className="quiet-panel dock-card dock-info-card">
+          <p className="card-kicker">읽기용 안내</p>
+          <h3>핵심 작업 범위</h3>
           <ul className="bullet-list tight">
             <li>여러 파일 일괄 변환</li>
-            <li>WEBP / JPG / PNG 상호 변환</li>
-            <li>BMP / GIF / SVG / HEIC / HEIF / PDF / TIFF / PSD 입력 지원</li>
-            <li>압축 품질 조절 및 비율 유지 리사이즈</li>
+            <li>JPG / PNG / WEBP 출력</li>
+            <li>HEIC / HEIF / PDF / TIFF / PSD 입력 지원</li>
+            <li>압축 품질 조절 + 비율 유지 리사이즈</li>
           </ul>
         </article>
-        <article className="surface-card dock-card">
-          <p className="card-kicker">처리 원칙</p>
-          <h3>가급적 브라우저 안에서 끝내는 방향</h3>
-          <p>설치 없이 바로 사용하실 수 있고, 업로드 파일을 장기 보관하지 않는 방향으로 설계하고 있습니다. 민감한 파일은 업로드 전에 한 번 더 확인해 주세요.</p>
+        <article className="quiet-panel dock-card dock-info-card">
+          <p className="card-kicker">읽기용 안내</p>
+          <h3>파일 처리 방식</h3>
+          <p>가능한 한 브라우저 안에서 처리하고, 업로드 파일을 장기 보관하지 않는 방향으로 설계하고 있습니다. 민감한 파일은 업로드 전에 한 번 더 확인해 주세요.</p>
         </article>
-        <article className="surface-card dock-card guide-dock-card">
-          <p className="card-kicker">가이드</p>
-          <h3>필요한 설명은 짧고 바로 읽히게</h3>
+        <article className="quiet-panel dock-card guide-dock-card">
+          <p className="card-kicker">클릭 가능한 가이드</p>
+          <h3>설명이 필요하면 여기서만 읽기</h3>
           <div className="mini-guide-list">
             {guides.slice(0, 3).map((guide) => (
               <button key={guide.slug} type="button" className="mini-guide-item" onClick={() => navigate(`/guides/${guide.slug}`)}>
@@ -1897,7 +1967,7 @@ function App() {
           <div>
             <p className="workspace-label">tool workspace</p>
             <h1>이미지 변환 작업화면</h1>
-            <p className="workspace-subtitle">여러 파일 업로드 → 설정 확인 → 일괄 변환 → 비교 → ZIP 다운로드 흐름으로 바로 사용하실 수 있습니다.</p>
+            <p className="workspace-subtitle">업로드 → 설정 → 변환 → 다운로드 흐름으로 바로 작업할 수 있습니다.</p>
           </div>
         </div>
         {renderWorkbench(false)}
