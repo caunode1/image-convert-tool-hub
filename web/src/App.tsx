@@ -326,6 +326,51 @@ function clampDimension(value: number, fallback = 1) {
   return Math.max(1, Math.round(value))
 }
 
+function parsePositiveDimensionInput(value: string) {
+  if (!value) return undefined
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined
+  return clampDimension(parsed)
+}
+
+function resolveResizeInputsOnUpload(options: {
+  firstSource: SourceItem
+  resizeWidth: string
+  resizeHeight: string
+  keepAspectRatio: boolean
+}) {
+  const parsedWidth = parsePositiveDimensionInput(options.resizeWidth)
+  const parsedHeight = parsePositiveDimensionInput(options.resizeHeight)
+
+  if (parsedWidth && parsedHeight) {
+    return {
+      width: String(parsedWidth),
+      height: String(parsedHeight),
+    }
+  }
+
+  if (options.keepAspectRatio) {
+    if (parsedWidth) {
+      return {
+        width: String(parsedWidth),
+        height: String(Math.max(1, Math.round((parsedWidth / options.firstSource.width) * options.firstSource.height))),
+      }
+    }
+
+    if (parsedHeight) {
+      return {
+        width: String(Math.max(1, Math.round((parsedHeight / options.firstSource.height) * options.firstSource.width))),
+        height: String(parsedHeight),
+      }
+    }
+  }
+
+  return {
+    width: parsedWidth ? String(parsedWidth) : String(options.firstSource.width),
+    height: parsedHeight ? String(parsedHeight) : String(options.firstSource.height),
+  }
+}
+
 function parseSvgLength(value: string | null) {
   if (!value) return null
   const trimmed = value.trim()
@@ -714,7 +759,7 @@ async function prepareSourceItem(file: File): Promise<SourceItem> {
       sizeLabel: formatBytes(file.size),
       mimeType,
       workingBlob: blob,
-      note: 'HEIC/HEIF 파일은 브라우저 호환성을 위해 먼저 PNG로 변환해 처리합니다.',
+      note: 'HEIC/HEIF는 먼저 PNG로 바꿔 처리합니다. 대부분 단일 이미지형은 괜찮지만 일부 HEIF 변형은 실패할 수 있습니다.',
     }
   }
 
@@ -763,7 +808,7 @@ async function prepareSourceItem(file: File): Promise<SourceItem> {
       sizeLabel: formatBytes(file.size),
       mimeType,
       workingBlob: rendered.blob,
-      note: 'PSD는 합성 미리보기 기준으로 변환합니다. 일부 특수 PSD는 제외될 수 있습니다.',
+      note: 'PSD는 합성 미리보기 기준으로 변환합니다. 8bit 합성 프리뷰가 없거나 16bit 이상이면 제한될 수 있습니다.',
     }
   }
 
@@ -1044,6 +1089,33 @@ function App() {
   const getGifOutputModeForItem = (item: SourceItem) => fileOptions[item.id]?.gifOutputMode ?? gifOutputMode
   const getSvgRasterScaleForItem = (item: SourceItem): SvgRasterScale => fileOptions[item.id]?.svgRasterScale ?? DEFAULT_SVG_RASTER_SCALE
 
+  const animatedGifItems = useMemo(() => sourceItems.filter((item) => item.animated), [sourceItems])
+  const effectiveGifSummary = useMemo(() => {
+    const total = animatedGifItems.length
+    const posterCount = animatedGifItems.filter((item) => (fileOptions[item.id]?.gifOutputMode ?? gifOutputMode) === 'poster').length
+    const sheetCount = total - posterCount
+    const hasMixed = posterCount > 0 && sheetCount > 0
+    const allSheet = total > 0 && sheetCount === total
+
+    return {
+      total,
+      posterCount,
+      sheetCount,
+      hasMixed,
+      label: hasMixed ? `대표 프레임 ${posterCount}개 · 프레임 시트 ${sheetCount}개` : allSheet ? '프레임 시트 1장' : '대표 프레임 1장',
+      helperText: hasMixed
+        ? `현재 파일별 설정이 섞여 있어 실제 결과는 파일별 선택을 따릅니다. (대표 ${posterCount}개 / 시트 ${sheetCount}개)`
+        : allSheet
+          ? `현재 GIF는 모두 최대 ${MAX_GIF_SHEET_FRAMES}프레임 시트로 처리합니다. 파일별로 대표 프레임으로 바꿀 수 있습니다.`
+          : '현재 GIF는 모두 대표 프레임 1장으로 처리합니다. 파일별로 프레임 시트로 바꿀 수 있습니다.',
+      noticeText: hasMixed
+        ? `애니메이션 GIF는 파일별 설정대로 처리합니다. 현재 대표 프레임 ${posterCount}개, 프레임 시트 ${sheetCount}개로 나뉘어 있습니다.`
+        : allSheet
+          ? `애니메이션 GIF는 전체 재생 파일로 바꾸지 않고, 최대 ${MAX_GIF_SHEET_FRAMES}프레임을 한 장의 시트로 정리합니다.`
+          : '애니메이션 GIF는 단순 첫 프레임이 아니라, 합성된 대표 프레임 1장을 골라 변환합니다.',
+    }
+  }, [animatedGifItems, fileOptions, gifOutputMode])
+
   const seoMeta = useMemo(() => {
     if (currentGuide) return { title: `${currentGuide.title} | ${siteInfo.name}`, description: currentGuide.description }
     if (path === '/guides') return { title: `가이드 모음 | ${siteInfo.name}`, description: '이미지 변환, 압축, 리사이즈와 관련된 실용 가이드를 모아 둔 페이지입니다.' }
@@ -1136,6 +1208,10 @@ function App() {
     const selected = Array.from(event.target.files ?? [])
     if (!selected.length) return
 
+    const previousResizeWidth = resizeWidth
+    const previousResizeHeight = resizeHeight
+    const shouldKeepAspectRatio = keepAspectRatio
+
     clearAllFiles()
     setError('')
     setNotice('')
@@ -1161,12 +1237,19 @@ function App() {
     }
 
     if (supported.length) {
+      const initialResize = resolveResizeInputsOnUpload({
+        firstSource: supported[0],
+        resizeWidth: previousResizeWidth,
+        resizeHeight: previousResizeHeight,
+        keepAspectRatio: shouldKeepAspectRatio,
+      })
+
       setSourceItems(supported)
       setFileOptions(createInitialFileOptions(supported))
       setBatchStatuses({})
       setBatchProgress(null)
-      setResizeWidth(String(supported[0].width))
-      setResizeHeight(String(supported[0].height))
+      setResizeWidth(initialResize.width)
+      setResizeHeight(initialResize.height)
 
       const animatedGifCount = supported.filter((item) => item.animated).length
       const svgCount = supported.filter((item) => item.mimeType === 'image/svg+xml').length
@@ -1603,16 +1686,12 @@ function App() {
                       <option value="poster">대표 프레임 1장으로 변환</option>
                       <option value="sheet">프레임 시트 1장으로 정리</option>
                     </select>
-                    <small>{gifOutputMode === 'sheet' ? `기본값은 최대 ${MAX_GIF_SHEET_FRAMES}프레임 시트입니다. 파일별로 대표 프레임으로 바꿀 수 있습니다.` : '기본값은 대표 프레임 1장입니다. 파일별로 프레임 시트로 바꿀 수 있습니다.'}</small>
+                    <small>{effectiveGifSummary.helperText}</small>
                   </label>
                 </div>
                 <div className="warning-box">
                   <strong>애니메이션 GIF 안내</strong>
-                  <p>
-                    {gifOutputMode === 'sheet'
-                      ? `애니메이션 GIF는 전체 재생 파일로 바꾸지 않고, 최대 ${MAX_GIF_SHEET_FRAMES}프레임을 한 장의 시트로 정리합니다.`
-                      : '애니메이션 GIF는 단순 첫 프레임이 아니라, 합성된 대표 프레임 1장을 골라 변환합니다.'}
-                  </p>
+                  <p>{effectiveGifSummary.noticeText}</p>
                 </div>
               </>
             ) : null}
@@ -1688,7 +1767,7 @@ function App() {
               <li>첫 파일 형식: {originalLabel}</li>
               <li>출력 형식: {targetLabel}</li>
               <li>처리 모드: {mode === 'convert' ? '포맷 변환' : '압축 / 리사이즈'}</li>
-              {hasAnimatedGif ? <li>GIF 처리: {gifOutputMode === 'sheet' ? '프레임 시트 1장' : '대표 프레임 1장'}</li> : null}
+              {hasAnimatedGif ? <li>GIF 처리: {effectiveGifSummary.label}</li> : null}
               <li>지원 입력: {SUPPORTED_INPUT_COPY}</li>
               <li>{RAW_INPUT_COPY}</li>
             </ul>

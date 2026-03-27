@@ -163,6 +163,7 @@ export const staticPages: Record<string, StaticPage> = {
         bullets: [
           'WEBP/JPG/PNG 포맷 변환',
           'TIFF·PSD·HEIC·PDF 입력을 브라우저용 이미지로 정리',
+          'HEIC/HEIF는 내부적으로 PNG로 먼저 변환해 처리',
           '품질 값을 조절한 압축',
           '가로/세로 크기 조절',
           '다운로드용 새 파일 생성',
@@ -174,6 +175,7 @@ export const staticPages: Record<string, StaticPage> = {
           '파일 이름만 바꾸는 식의 가짜 변환은 하지 않습니다.',
           '업로드 파일을 장기 보관하는 것을 기본값으로 두지 않습니다.',
           'RAW 전체 포맷군은 아직 브라우저 버전에서 지원하지 않습니다.',
+          '16bit 이상 PSD, 합성 프리뷰가 없는 PSD, 일부 특수 HEIF 변형은 제한될 수 있습니다.',
           '문서·영상·압축파일 같은 범용 포맷 전체를 한 번에 다루진 않습니다.',
         ],
       },
@@ -247,6 +249,10 @@ export const staticPages: Record<string, StaticPage> = {
       {
         heading: 'PNG를 JPG로 바꾸면 투명 배경은 어떻게 되나요?',
         paragraphs: ['JPG는 투명 배경을 지원하지 않기 때문에 보통 흰색 배경처럼 채워져 저장됩니다. PSD나 일부 TIFF도 같은 방식으로 처리될 수 있습니다.'],
+      },
+      {
+        heading: 'HEIC/HEIF나 PSD는 제한이 있나요?',
+        paragraphs: ['HEIC/HEIF는 브라우저 호환용 PNG로 먼저 바꿔 처리합니다. 대부분 단일 이미지형은 괜찮지만 일부 HEIF 변형은 실패할 수 있습니다. PSD는 합성 미리보기와 8bit 기준으로 변환하며, 16bit 이상이거나 합성 프리뷰가 없는 파일은 제한될 수 있습니다.'],
       },
       {
         heading: 'RAW 파일도 바로 변환할 수 있나요?',
