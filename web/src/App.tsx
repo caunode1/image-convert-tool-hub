@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
 import './App.css'
-import { guides, siteInfo, staticPages, type Guide } from './siteContent'
+import { guides, siteInfo, staticPages, toolHighlights, type Guide } from './siteContent'
 
 type ToolMode = 'convert' | 'optimize'
 type TargetFormat = 'image/jpeg' | 'image/png' | 'image/webp'
@@ -2170,7 +2170,7 @@ function App() {
         <div className="home-hero-copy">
           <p className="workspace-label">image utility</p>
           <h1>이미지 변환 툴 허브</h1>
-          <p className="workspace-subtitle">파일을 올리고 원하는 작업만 고르면 됩니다.</p>
+          <p className="workspace-subtitle">파일을 올리고 원하는 작업을 고르면, 변환·압축·리사이즈와 특수 포맷 정리까지 한 자리에서 이어서 할 수 있습니다.</p>
         </div>
 
         <div className="home-primary-grid">
@@ -2234,15 +2234,70 @@ function App() {
           </article>
           <article className="quiet-panel dock-card guide-dock-card">
             <p className="card-kicker">가이드</p>
-            <h3>설명이 더 필요하면 여기서만 읽기</h3>
+            <h3>설명이 더 필요하면 여기서 읽기</h3>
             <div className="mini-guide-list">
-              {guides.slice(0, 3).map((guide) => (
+              {guides.slice(0, 6).map((guide) => (
                 <button key={guide.slug} type="button" className="mini-guide-item" onClick={() => navigate(`/guides/${guide.slug}`)}>
                   <strong>{guide.title}</strong>
                   <span>{guide.readingTime}</span>
                 </button>
               ))}
             </div>
+          </article>
+        </div>
+
+        <div className="utility-dock-grid home-reading-grid">
+          {toolHighlights.map((item) => (
+            <article key={item.title} className="quiet-panel dock-card dock-info-card static-info-card">
+              <p className="card-kicker">운영 원칙</p>
+              <h3>{item.title}</h3>
+              <p>{item.text}</p>
+            </article>
+          ))}
+        </div>
+
+        <div className="utility-dock-grid home-reading-grid">
+          <article className="quiet-panel dock-card guide-dock-card">
+            <p className="card-kicker">정책 / 신뢰</p>
+            <h3>사이트를 이해할 수 있는 기본 문서</h3>
+            <div className="mini-guide-list">
+              <button type="button" className="mini-guide-item" onClick={() => navigate('/about')}>
+                <strong>소개</strong>
+                <span>운영 목적</span>
+              </button>
+              <button type="button" className="mini-guide-item" onClick={() => navigate('/methodology')}>
+                <strong>방법론</strong>
+                <span>처리 방식</span>
+              </button>
+              <button type="button" className="mini-guide-item" onClick={() => navigate('/faq')}>
+                <strong>FAQ</strong>
+                <span>제한 사항</span>
+              </button>
+              <button type="button" className="mini-guide-item" onClick={() => navigate('/contact')}>
+                <strong>문의</strong>
+                <span>운영 메일</span>
+              </button>
+            </div>
+          </article>
+          <article className="quiet-panel dock-card dock-info-card static-info-card">
+            <p className="card-kicker">이 사이트가 신경 쓰는 것</p>
+            <h3>광고용 랜딩보다 실제 도움을 우선</h3>
+            <ul className="bullet-list tight">
+              <li>도구 설명과 제한 사항을 같은 사이트 안에서 공개</li>
+              <li>특수 포맷도 되는 범위와 caveat를 분리해서 안내</li>
+              <li>실제 업로드 / 변환 / 다운로드 흐름을 기준으로 검증</li>
+              <li>문의 가능한 운영 이메일과 정책 페이지 유지</li>
+            </ul>
+          </article>
+          <article className="quiet-panel dock-card dock-info-card static-info-card">
+            <p className="card-kicker">권장 사용 방식</p>
+            <h3>결과는 항상 한 번 더 확인</h3>
+            <ul className="bullet-list tight">
+              <li>사진은 WEBP/JPG를 같이 비교</li>
+              <li>투명 배경이나 로고는 PNG를 우선 검토</li>
+              <li>HEIC·PSD·PDF·TIFF는 결과를 직접 열어 확인</li>
+              <li>중요한 원본은 별도로 보관</li>
+            </ul>
           </article>
         </div>
       </section>
