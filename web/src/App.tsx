@@ -141,6 +141,7 @@ type ConvertedItem = {
   width: number
   height: number
   reductionText: string
+  sizeDeltaPercent: number | null
   url: string
   blob: Blob
 }
@@ -285,9 +286,14 @@ function fileNameWithoutExtension(name: string) {
   return name.replace(/\.[^/.]+$/, '')
 }
 
+function calculateSizeDeltaPercent(before: number, after: number) {
+  if (!before || before <= 0) return null
+  return Math.round(((after - before) / before) * 100)
+}
+
 function formatReduction(before: number, after: number) {
-  if (!before || before <= 0) return '비교 불가'
-  const diff = Math.round(((after - before) / before) * 100)
+  const diff = calculateSizeDeltaPercent(before, after)
+  if (diff === null) return '비교 불가'
   if (diff === 0) return '용량 변화 거의 없음'
   return diff < 0 ? `${Math.abs(diff)}% 감소` : `${diff}% 증가`
 }
@@ -562,21 +568,152 @@ async function renderTiffToPngBlob(file: File) {
   }
 }
 
-async function renderPsdToPngBlob(file: File) {
-  const { readPsd } = await import('ag-psd')
-  const psd = readPsd(await file.arrayBuffer(), { skipLayerImageData: true, skipThumbnail: true })
+type PsdLayerLike = {
+  hidden?: boolean
+  opacity?: number
+  blendMode?: string
+  left?: number
+  top?: number
+  canvas?: HTMLCanvasElement
+  clipping?: boolean
+  children?: PsdLayerLike[]
+}
 
-  if (psd.bitsPerChannel && psd.bitsPerChannel !== 8) {
-    throw new Error('16비트 이상 PSD는 아직 지원하지 않습니다.')
+type FlattenedPsdLayer = {
+  canvas: HTMLCanvasElement
+  left: number
+  top: number
+  opacity: number
+  blendMode?: string
+  clipping?: boolean
+}
+
+function mapPsdBlendModeToCanvas(blendMode?: string): GlobalCompositeOperation {
+  switch (blendMode) {
+    case 'multiply':
+    case 'screen':
+    case 'overlay':
+    case 'darken':
+    case 'lighten':
+    case 'difference':
+    case 'exclusion':
+    case 'hue':
+    case 'saturation':
+    case 'color':
+    case 'luminosity':
+      return blendMode
+    case 'color dodge':
+      return 'color-dodge'
+    case 'color burn':
+      return 'color-burn'
+    case 'hard light':
+      return 'hard-light'
+    case 'soft light':
+      return 'soft-light'
+    case 'linear dodge':
+      return 'lighter'
+    default:
+      return 'source-over'
+  }
+}
+
+function flattenPsdLayers(layers: PsdLayerLike[] = [], inheritedOpacity = 1): FlattenedPsdLayer[] {
+  const flattened: FlattenedPsdLayer[] = []
+
+  for (let index = layers.length - 1; index >= 0; index -= 1) {
+    const layer = layers[index]
+    if (!layer || layer.hidden) continue
+
+    const opacity = Math.max(0, Math.min(1, inheritedOpacity * (layer.opacity ?? 1)))
+    if (opacity <= 0) continue
+
+    if (layer.children?.length) {
+      flattened.push(...flattenPsdLayers(layer.children, opacity))
+      continue
+    }
+
+    if (!layer.canvas) continue
+
+    flattened.push({
+      canvas: layer.canvas,
+      left: layer.left ?? 0,
+      top: layer.top ?? 0,
+      opacity,
+      blendMode: layer.blendMode,
+      clipping: layer.clipping,
+    })
   }
 
-  const canvas = psd.canvas as HTMLCanvasElement | undefined
-  if (!canvas) throw new Error('PSD 합성 미리보기가 없는 파일입니다.')
+  return flattened
+}
+
+function buildPsdFallbackComposite(psd: { width?: number; height?: number; children?: PsdLayerLike[] }) {
+  const width = clampDimension(psd.width ?? 0)
+  const height = clampDimension(psd.height ?? 0)
+  const flattenedLayers = flattenPsdLayers(psd.children ?? [])
+  if (!flattenedLayers.length) return null
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = getCanvasContext(canvas, 'PSD 레이어를 다시 합성하지 못했습니다.')
+
+  let drawnLayers = 0
+  let approximatedLayers = 0
+
+  flattenedLayers.forEach((layer) => {
+    ctx.save()
+    ctx.globalAlpha = layer.opacity
+    ctx.globalCompositeOperation = mapPsdBlendModeToCanvas(layer.blendMode)
+    ctx.drawImage(layer.canvas, layer.left, layer.top)
+    ctx.restore()
+    drawnLayers += 1
+
+    if (layer.clipping || mapPsdBlendModeToCanvas(layer.blendMode) === 'source-over' && layer.blendMode && layer.blendMode !== 'normal' && layer.blendMode !== 'pass through') {
+      approximatedLayers += 1
+    }
+  })
 
   return {
-    blob: await canvasToPngBlob(canvas),
-    width: psd.width ?? canvas.width,
-    height: psd.height ?? canvas.height,
+    canvas,
+    drawnLayers,
+    approximatedLayers,
+  }
+}
+
+async function renderPsdToPngBlob(file: File) {
+  const { readPsd } = await import('ag-psd')
+  const psd = readPsd(await file.arrayBuffer(), { skipLayerImageData: false, skipThumbnail: true })
+
+  if (psd.bitsPerChannel && psd.bitsPerChannel !== 8) {
+    throw new Error('16bit 이상 PSD는 아직 미리보기 변환 범위 밖입니다.')
+  }
+
+  const previewCanvas = psd.canvas as HTMLCanvasElement | undefined
+  if (previewCanvas) {
+    return {
+      blob: await canvasToPngBlob(previewCanvas),
+      width: psd.width ?? previewCanvas.width,
+      height: psd.height ?? previewCanvas.height,
+      note: 'PSD는 합성 미리보기 기준으로 변환합니다. 합성 미리보기가 없으면 보이는 레이어를 다시 합성해 시도합니다. 16bit 이상·일부 고급 효과는 제한될 수 있습니다.',
+      usedLayerCompositeFallback: false,
+    }
+  }
+
+  const fallback = buildPsdFallbackComposite(psd as { width?: number; height?: number; children?: PsdLayerLike[] })
+  if (!fallback) {
+    throw new Error('PSD 합성 미리보기가 없고, 브라우저에서 다시 그릴 수 있는 레이어도 찾지 못했습니다.')
+  }
+
+  return {
+    blob: await canvasToPngBlob(fallback.canvas),
+    width: psd.width ?? fallback.canvas.width,
+    height: psd.height ?? fallback.canvas.height,
+    note:
+      fallback.approximatedLayers > 0
+        ? `PSD 합성 미리보기가 없어 보이는 레이어 ${fallback.drawnLayers}개를 다시 합성했습니다. 일부 블렌드/클리핑은 원본과 다를 수 있습니다.`
+        : `PSD 합성 미리보기가 없어 보이는 레이어 ${fallback.drawnLayers}개를 다시 합성해 처리했습니다.`,
+    usedLayerCompositeFallback: true,
   }
 }
 
@@ -759,7 +896,7 @@ async function prepareSourceItem(file: File): Promise<SourceItem> {
       sizeLabel: formatBytes(file.size),
       mimeType,
       workingBlob: blob,
-      note: 'HEIC/HEIF는 먼저 PNG로 바꿔 처리합니다. 대부분 단일 이미지형은 괜찮지만 일부 HEIF 변형은 실패할 수 있습니다.',
+      note: 'HEIC/HEIF는 먼저 PNG로 바꿔 처리합니다. 일반적인 단일 사진은 대체로 괜찮지만 일부 HEIF 변형은 실패할 수 있습니다.',
     }
   }
 
@@ -808,7 +945,7 @@ async function prepareSourceItem(file: File): Promise<SourceItem> {
       sizeLabel: formatBytes(file.size),
       mimeType,
       workingBlob: rendered.blob,
-      note: 'PSD는 합성 미리보기 기준으로 변환합니다. 8bit 합성 프리뷰가 없거나 16bit 이상이면 제한될 수 있습니다.',
+      note: rendered.note,
     }
   }
 
@@ -1083,8 +1220,11 @@ function App() {
     ? 'PNG는 품질 슬라이더 영향이 작고, 주로 크기 조절이 용량에 더 크게 작용합니다.'
     : mode === 'optimize'
       ? '용량을 많이 줄이고 싶다면 70~85%부터 비교해 보시는 것을 권장합니다.'
-      : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다. HEIC, PDF, TIFF, PSD는 내부적으로 브라우저용 이미지로 바꾼 뒤 출력합니다.'
+      : targetFormat === 'image/webp'
+        ? '사진은 80~88% 정도에서 많이 쓰이지만, PNG·SVG·이미 최적화된 WEBP는 더 커질 수 있어 결과 용량 비교가 중요합니다.'
+        : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다. HEIC, PDF, TIFF, PSD는 내부적으로 브라우저용 이미지로 바꾼 뒤 출력합니다.'
   const batchProgressPercent = batchProgress ? Math.round((batchProgress.completedFiles / Math.max(1, batchProgress.totalFiles)) * 100) : 0
+  const largerResultCount = useMemo(() => results.filter((item) => (item.sizeDeltaPercent ?? 0) > 0).length, [results])
   const hasFiles = sourceItems.length > 0
   const hasResults = results.length > 0
   const currentFlowStep = hasResults ? 4 : hasFiles ? (isProcessing ? 3 : 2) : 1
@@ -1236,7 +1376,7 @@ function App() {
     const supported: SourceItem[] = []
     const unsupportedNames: string[] = []
     const rawNames: string[] = []
-    const unreadableNames: string[] = []
+    const readFailures: Array<{ name: string; reason: string }> = []
 
     for (const file of selected) {
       const mimeType = mimeFromFile(file)
@@ -1248,8 +1388,8 @@ function App() {
 
       try {
         supported.push(await prepareSourceItem(file))
-      } catch {
-        unreadableNames.push(file.name)
+      } catch (readError) {
+        readFailures.push({ name: file.name, reason: getErrorMessage(readError) })
       }
     }
 
@@ -1273,14 +1413,20 @@ function App() {
       const excludedMessages = [
         rawNames.length ? `RAW ${rawNames.length}개는 아직 지원하지 않아 제외했습니다.` : '',
         unsupportedNames.length ? `미지원 파일 ${unsupportedNames.length}개는 제외했습니다.` : '',
-        unreadableNames.length ? `읽지 못한 파일 ${unreadableNames.length}개는 제외했습니다.` : '',
+        readFailures.length ? `읽지 못한 파일 ${readFailures.length}개는 제외했습니다.${readFailures[0] ? ` (${readFailures[0].name}: ${readFailures[0].reason})` : ''}` : '',
         animatedGifCount ? `애니메이션 GIF ${animatedGifCount}개는 파일별로 대표 프레임/시트 선택이 가능합니다.` : '',
         svgCount ? `SVG ${svgCount}개는 파일별 선명도 옵션을 함께 조절할 수 있습니다.` : '',
       ].filter(Boolean)
 
       setNotice(`${supported.length}개 파일을 불러왔습니다.${excludedMessages.length ? ` ${excludedMessages.join(' ')}` : ''}`)
-    } else if (rawNames.length && !unsupportedNames.length && !unreadableNames.length) {
+    } else if (rawNames.length && !unsupportedNames.length && !readFailures.length) {
       setError('RAW 파일은 아직 지원하지 않습니다. 브라우저 버전에서는 TIFF·PSD까지 우선 지원하고, NEF/CR2/ARW/DNG 등은 다음 단계 검토 대상입니다.')
+    } else if (readFailures.length && !unsupportedNames.length && !rawNames.length) {
+      const summary = readFailures.slice(0, 2).map((item) => `${item.name}: ${item.reason}`).join(' · ')
+      setError(summary)
+    } else if (readFailures.length) {
+      const summary = readFailures.slice(0, 2).map((item) => `${item.name}: ${item.reason}`).join(' · ')
+      setError(`지원 형식 안에서도 읽지 못한 파일이 있습니다. ${summary}`)
     } else {
       setError(`현재는 ${SUPPORTED_INPUT_COPY} 파일을 지원합니다.`)
     }
@@ -1288,12 +1434,12 @@ function App() {
     if (event.target) event.target.value = ''
   }
 
-  const applyPreset = (next: { mode: ToolMode; format: TargetFormat; quality: number; resizeEnabled?: boolean }) => {
+  const applyPreset = (next: { mode: ToolMode; format: TargetFormat; quality: number; resizeEnabled?: boolean; notice: string }) => {
     setMode(next.mode)
     setTargetFormat(next.format)
     setQuality(next.quality)
     setResizeEnabled(Boolean(next.resizeEnabled))
-    setNotice(`${mimeToLabel(next.format)} 기준 프리셋을 적용했습니다.`)
+    setNotice(next.notice)
   }
 
   const updateResizeWidth = (value: string) => {
@@ -1417,6 +1563,7 @@ function App() {
               width: converted.width,
               height: converted.height,
               reductionText: formatReduction(item.file.size, converted.blob.size),
+              sizeDeltaPercent: calculateSizeDeltaPercent(item.file.size, converted.blob.size),
               url,
               blob: converted.blob,
             })
@@ -1442,6 +1589,7 @@ function App() {
             width: converted.width,
             height: converted.height,
             reductionText: formatReduction(item.file.size, converted.blob.size),
+            sizeDeltaPercent: calculateSizeDeltaPercent(item.file.size, converted.blob.size),
             url,
             blob: converted.blob,
           })
@@ -1495,7 +1643,12 @@ function App() {
       const summary = failed.slice(0, 2).map((item) => `${item.name}: ${item.reason}`).join(' · ')
       setNotice(`${successFiles}개 성공, ${failedFiles}개 실패${summary ? ` · ${summary}` : ''}`)
     } else {
-      setNotice(`${nextResults.length}개 결과를 만들었습니다.`)
+      const largerOutputs = nextResults.filter((item) => (item.sizeDeltaPercent ?? 0) > 0).length
+      setNotice(
+        largerOutputs
+          ? `${nextResults.length}개 결과를 만들었습니다. 이 중 ${largerOutputs}개는 원본보다 커졌습니다.`
+          : `${nextResults.length}개 결과를 만들었습니다.`,
+      )
     }
     setIsProcessing(false)
   }
@@ -1536,28 +1689,41 @@ function App() {
       title: 'JPG로 변환',
       description: '호환성 우선',
       active: mode === 'convert' && targetFormat === 'image/jpeg',
-      onClick: () => applyPreset({ mode: 'convert', format: 'image/jpeg', quality: 0.92 }),
+      onClick: () => applyPreset({ mode: 'convert', format: 'image/jpeg', quality: 0.92, notice: 'JPG 프리셋을 적용했습니다.' }),
     },
     {
       key: 'png',
       title: 'PNG로 변환',
       description: '선명도 우선',
       active: mode === 'convert' && targetFormat === 'image/png',
-      onClick: () => applyPreset({ mode: 'convert', format: 'image/png', quality: 1 }),
+      onClick: () => applyPreset({ mode: 'convert', format: 'image/png', quality: 1, notice: 'PNG 프리셋을 적용했습니다.' }),
     },
     {
       key: 'webp',
       title: 'WEBP로 변환',
-      description: '웹 업로드용',
+      description: '사진 위주 웹 업로드',
       active: mode === 'convert' && targetFormat === 'image/webp',
-      onClick: () => applyPreset({ mode: 'convert', format: 'image/webp', quality: 0.86 }),
+      onClick: () =>
+        applyPreset({
+          mode: 'convert',
+          format: 'image/webp',
+          quality: 0.86,
+          notice: 'WEBP 프리셋을 적용했습니다. 사진은 줄어드는 경우가 많지만 PNG·이미 최적화된 파일은 더 커질 수 있습니다.',
+        }),
     },
     {
       key: 'optimize',
       title: '압축 / 리사이즈',
       description: '용량 먼저 줄이기',
       active: mode === 'optimize',
-      onClick: () => applyPreset({ mode: 'optimize', format: targetFormat, quality: 0.8, resizeEnabled: true }),
+      onClick: () =>
+        applyPreset({
+          mode: 'optimize',
+          format: targetFormat,
+          quality: 0.8,
+          resizeEnabled: true,
+          notice: '압축 / 리사이즈 프리셋을 적용했습니다.',
+        }),
     },
   ]
 
@@ -1775,6 +1941,13 @@ function App() {
               </div>
             ) : null}
 
+            {targetFormat === 'image/webp' ? (
+              <div className="warning-box">
+                <strong>WEBP 용량 안내</strong>
+                <p>사진은 줄어드는 경우가 많지만, 투명 PNG·SVG·작은 그래픽·이미 최적화된 WEBP는 오히려 커질 수 있습니다. 결과 용량을 보고 JPG/PNG도 비교해 보세요.</p>
+              </div>
+            ) : null}
+
             {hasAnimatedGif ? (
               <>
                 <div className="field-grid">
@@ -1950,14 +2123,23 @@ function App() {
               <h2>변환 결과 목록</h2>
             </div>
           </div>
+          {targetFormat === 'image/webp' && largerResultCount > 0 ? (
+            <div className="warning-box result-summary-warning">
+              <strong>WEBP 결과 확인</strong>
+              <p>이번 결과 {largerResultCount}개는 원본보다 커졌습니다. 투명 PNG·작은 그래픽·이미 최적화된 WEBP에서는 자연스러운 편이라, 품질을 조금 낮추거나 JPG/PNG와 비교해 보세요.</p>
+            </div>
+          ) : null}
           <div className="results-list">
             {results.map((item) => {
               const sourceName = sourceItems.find((source) => source.id === item.sourceId)?.file.name
+              const trendClass = item.sizeDeltaPercent !== null && item.sizeDeltaPercent > 0 ? 'is-larger' : item.sizeDeltaPercent !== null && item.sizeDeltaPercent < 0 ? 'is-smaller' : 'is-similar'
+              const trendLabel = item.sizeDeltaPercent !== null && item.sizeDeltaPercent > 0 ? '원본보다 큼' : item.sizeDeltaPercent !== null && item.sizeDeltaPercent < 0 ? '원본보다 작음' : '크기 비슷함'
               return (
                 <article key={item.id} className="result-row">
                   <div>
                     <strong>{item.filename}</strong>
                     <p>{mimeToLabel(item.mimeType)} · {item.width} × {item.height}px · {item.sizeLabel} · {item.reductionText}</p>
+                    <small className={`result-trend ${trendClass}`}>{trendLabel}</small>
                     {sourceName ? <small>원본: {sourceName}</small> : null}
                   </div>
                   <button type="button" className="secondary-button" onClick={() => downloadOne(item)}>
@@ -2031,7 +2213,7 @@ function App() {
             <ul className="bullet-list tight">
               <li>여러 파일 일괄 변환</li>
               <li>JPG / PNG / WEBP 출력</li>
-              <li>HEIC / HEIF / PDF / TIFF / PSD 입력</li>
+              <li>HEIC / HEIF / PDF / TIFF / PSD 입력(일부 제한 있음)</li>
               <li>압축 품질 조절 + 비율 유지 리사이즈</li>
             </ul>
           </article>

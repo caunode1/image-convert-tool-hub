@@ -1,8 +1,10 @@
 declare module 'utif' {
+  type TiffIfd = Record<string, unknown>
+
   const UTIF: {
-    decode(buffer: ArrayBuffer): any[]
-    decodeImage(buffer: ArrayBuffer, ifd: any): void
-    toRGBA8(ifd: any): Uint8Array
+    decode(buffer: ArrayBuffer): TiffIfd[]
+    decodeImage(buffer: ArrayBuffer, ifd: TiffIfd): void
+    toRGBA8(ifd: TiffIfd): Uint8Array
   }
 
   export default UTIF

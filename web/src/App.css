@@ -1122,7 +1122,29 @@ button {
 }
 
 .result-row small {
+  display: block;
+  margin-top: 4px;
   color: var(--muted);
+}
+
+.result-summary-warning {
+  margin-bottom: 8px;
+}
+
+.result-trend {
+  font-weight: 800;
+}
+
+.result-trend.is-larger {
+  color: #fcd34d;
+}
+
+.result-trend.is-smaller {
+  color: #86efac;
+}
+
+.result-trend.is-similar {
+  color: #cbd5e1;
 }
 
 .site-footer {

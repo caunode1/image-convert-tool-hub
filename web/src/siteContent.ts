@@ -69,7 +69,7 @@ export const guides: Guide[] = [
         bullets: [
           '사진 위주: JPG 또는 WEBP',
           '투명 배경 필요: PNG 또는 WEBP',
-          '웹 업로드 용량 줄이기: WEBP 우선 고려',
+          '웹 업로드 용량 줄이기: WEBP 우선 고려, 단 PNG·이미 최적화된 파일은 더 커질 수 있음',
           '호환성 우선: JPG 또는 PNG',
         ],
       },
@@ -164,6 +164,7 @@ export const staticPages: Record<string, StaticPage> = {
           'WEBP/JPG/PNG 포맷 변환',
           'TIFF·PSD·HEIC·PDF 입력을 브라우저용 이미지로 정리',
           'HEIC/HEIF는 내부적으로 PNG로 먼저 변환해 처리',
+          'PSD는 합성 미리보기가 없으면 보이는 레이어를 다시 합성해 시도',
           '품질 값을 조절한 압축',
           '가로/세로 크기 조절',
           '다운로드용 새 파일 생성',
@@ -175,7 +176,7 @@ export const staticPages: Record<string, StaticPage> = {
           '파일 이름만 바꾸는 식의 가짜 변환은 하지 않습니다.',
           '업로드 파일을 장기 보관하는 것을 기본값으로 두지 않습니다.',
           'RAW 전체 포맷군은 아직 브라우저 버전에서 지원하지 않습니다.',
-          '16bit 이상 PSD, 합성 프리뷰가 없는 PSD, 일부 특수 HEIF 변형은 제한될 수 있습니다.',
+          '16bit 이상 PSD, 일부 고급 효과 PSD, 일부 특수 HEIF 변형은 제한될 수 있습니다.',
           '문서·영상·압축파일 같은 범용 포맷 전체를 한 번에 다루진 않습니다.',
         ],
       },
@@ -252,7 +253,7 @@ export const staticPages: Record<string, StaticPage> = {
       },
       {
         heading: 'HEIC/HEIF나 PSD는 제한이 있나요?',
-        paragraphs: ['HEIC/HEIF는 브라우저 호환용 PNG로 먼저 바꿔 처리합니다. 대부분 단일 이미지형은 괜찮지만 일부 HEIF 변형은 실패할 수 있습니다. PSD는 합성 미리보기와 8bit 기준으로 변환하며, 16bit 이상이거나 합성 프리뷰가 없는 파일은 제한될 수 있습니다.'],
+        paragraphs: ['HEIC/HEIF는 브라우저 호환용 PNG로 먼저 바꿔 처리합니다. 일반적인 단일 사진은 대체로 괜찮지만 일부 HEIF 변형은 실패할 수 있습니다. PSD는 합성 미리보기를 우선 쓰고, 없으면 보이는 레이어를 다시 합성해 시도합니다. 다만 16bit 이상이거나 일부 고급 효과가 많은 파일은 제한될 수 있습니다.'],
       },
       {
         heading: 'RAW 파일도 바로 변환할 수 있나요?',
