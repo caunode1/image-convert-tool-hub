@@ -1523,24 +1523,78 @@ function App() {
     URL.revokeObjectURL(zipUrl)
   }
 
-  const renderWorkbench = (compact = false) => (
+  type WorkbenchOptions = {
+    includeHeading?: boolean
+    includeFlowStrip?: boolean
+    includePresetPanel?: boolean
+    includeUploadBox?: boolean
+  }
+
+  const presetChoices = [
+    {
+      key: 'jpg',
+      title: 'JPG로 변환',
+      description: '호환성 우선',
+      active: mode === 'convert' && targetFormat === 'image/jpeg',
+      onClick: () => applyPreset({ mode: 'convert', format: 'image/jpeg', quality: 0.92 }),
+    },
+    {
+      key: 'png',
+      title: 'PNG로 변환',
+      description: '선명도 우선',
+      active: mode === 'convert' && targetFormat === 'image/png',
+      onClick: () => applyPreset({ mode: 'convert', format: 'image/png', quality: 1 }),
+    },
+    {
+      key: 'webp',
+      title: 'WEBP로 변환',
+      description: '웹 업로드용',
+      active: mode === 'convert' && targetFormat === 'image/webp',
+      onClick: () => applyPreset({ mode: 'convert', format: 'image/webp', quality: 0.86 }),
+    },
+    {
+      key: 'optimize',
+      title: '압축 / 리사이즈',
+      description: '용량 먼저 줄이기',
+      active: mode === 'optimize',
+      onClick: () => applyPreset({ mode: 'optimize', format: targetFormat, quality: 0.8, resizeEnabled: true }),
+    },
+  ]
+
+  const renderPresetButtons = (cardClassName = 'preset-card') =>
+    presetChoices.map((item) => (
+      <button type="button" key={item.key} className={`${cardClassName}${item.active ? ' active' : ''}`} onClick={item.onClick}>
+        <strong>{item.title}</strong>
+        <span>{item.description}</span>
+      </button>
+    ))
+
+  const renderUploadBox = (className = 'upload-box') => (
+    <label className={className}>
+      <input type="file" multiple accept={FILE_INPUT_ACCEPT} onChange={handleFileChange} hidden />
+      <div className="upload-box-top">
+        <span className="upload-kicker">1. 업로드</span>
+        <span className="upload-cta">파일 선택</span>
+      </div>
+      <strong>여러 이미지 파일 한 번에 올리기</strong>
+      <span>{SUPPORTED_INPUT_COPY} 지원 · {RAW_INPUT_COPY}</span>
+    </label>
+  )
+
+  const scrollToWorkbenchDetails = () => {
+    document.getElementById('home-workspace-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  const renderWorkbench = ({
+    includeHeading = true,
+    includeFlowStrip = true,
+    includePresetPanel = true,
+    includeUploadBox = true,
+  }: WorkbenchOptions = {}) => (
     <div className="workbench-stack">
       <div className="tool-stage-grid">
         <section className="surface-card tool-panel main-tool-panel">
-          {compact ? (
-            <div className="workspace-heading compact-workspace-heading">
-              <div>
-                <p className="eyebrow">빠른 변환</p>
-                <h1>이미지 변환 / 압축 도구</h1>
-                <p>업로드 → 설정 → 변환 → 다운로드 순서로 바로 끝낼 수 있게 정리했습니다.</p>
-              </div>
-              <div className="proof-row compact-proof-row">
-                <span className="proof-chip">여러 파일 한 번에</span>
-                <span className="proof-chip">HEIC · PDF · TIFF · PSD 입력 지원</span>
-                <span className="proof-chip">ZIP 묶음 다운로드</span>
-              </div>
-            </div>
-          ) : (
+          {includeHeading ? (
             <div className="workspace-heading">
               <div>
                 <p className="eyebrow">작업 공간</p>
@@ -1548,52 +1602,39 @@ function App() {
                 <p>파일을 올리고 설정만 확인하면 바로 일괄 변환할 수 있습니다.</p>
               </div>
             </div>
-          )}
+          ) : null}
 
-          <div className="flow-strip" aria-label="작업 흐름">
-            {[
-              { step: 1, title: '업로드', detail: '파일 선택' },
-              { step: 2, title: '설정', detail: '형식 / 품질' },
-              { step: 3, title: '변환', detail: '일괄 처리' },
-              { step: 4, title: '다운로드', detail: '개별 / ZIP' },
-            ].map((item) => {
-              const stateClass = currentFlowStep === item.step ? 'is-current' : currentFlowStep > item.step ? 'is-done' : ''
-              return (
-                <div key={item.step} className={`flow-step ${stateClass}`.trim()}>
-                  <span className="flow-index">{item.step}</span>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <small>{item.detail}</small>
+          {includeFlowStrip ? (
+            <div className="flow-strip" aria-label="작업 흐름">
+              {[
+                { step: 1, title: '업로드', detail: '파일 선택' },
+                { step: 2, title: '설정', detail: '형식 / 품질' },
+                { step: 3, title: '변환', detail: '일괄 처리' },
+                { step: 4, title: '다운로드', detail: '개별 / ZIP' },
+              ].map((item) => {
+                const stateClass = currentFlowStep === item.step ? 'is-current' : currentFlowStep > item.step ? 'is-done' : ''
+                return (
+                  <div key={item.step} className={`flow-step ${stateClass}`.trim()}>
+                    <span className="flow-index">{item.step}</span>
+                    <div>
+                      <strong>{item.title}</strong>
+                      <small>{item.detail}</small>
+                    </div>
                   </div>
-                </div>
-              )
-            })}
-          </div>
+                )
+              })}
+            </div>
+          ) : null}
 
-          <section className="preset-panel compact-preset-panel">
-            <div className="preset-panel-head">
-              <p className="eyebrow">원클릭 프리셋</p>
-              <span>자주 쓰는 조합만 먼저 골라두었습니다.</span>
-            </div>
-            <div className="preset-grid">
-              <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/jpeg', quality: 0.92 })}>
-                <strong>여러 파일 → JPG</strong>
-                <span>호환성 우선</span>
-              </button>
-              <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/png', quality: 1 })}>
-                <strong>여러 파일 → PNG</strong>
-                <span>선명도 우선</span>
-              </button>
-              <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'convert', format: 'image/webp', quality: 0.86 })}>
-                <strong>여러 파일 → WEBP</strong>
-                <span>웹 업로드용</span>
-              </button>
-              <button type="button" className="preset-card" onClick={() => applyPreset({ mode: 'optimize', format: targetFormat, quality: 0.8, resizeEnabled: true })}>
-                <strong>일괄 압축 / 리사이즈</strong>
-                <span>용량부터 줄이기</span>
-              </button>
-            </div>
-          </section>
+          {includePresetPanel ? (
+            <section className="preset-panel compact-preset-panel">
+              <div className="preset-panel-head">
+                <p className="eyebrow">원클릭 프리셋</p>
+                <span>자주 쓰는 조합만 먼저 골라두었습니다.</span>
+              </div>
+              <div className="preset-grid">{renderPresetButtons()}</div>
+            </section>
+          ) : null}
 
           <form className="tool-form-shell" onSubmit={handleSubmit}>
             <div className="toolbar-row">
@@ -1605,15 +1646,7 @@ function App() {
               </button>
             </div>
 
-            <label className="upload-box">
-              <input type="file" multiple accept={FILE_INPUT_ACCEPT} onChange={handleFileChange} hidden />
-              <div className="upload-box-top">
-                <span className="upload-kicker">1. 업로드</span>
-                <span className="upload-cta">여기를 눌러 파일 선택</span>
-              </div>
-              <strong>여러 이미지 파일을 한 번에 올리기</strong>
-              <span>{SUPPORTED_INPUT_COPY} 지원 · {RAW_INPUT_COPY}</span>
-            </label>
+            {includeUploadBox ? renderUploadBox() : <p className="helper-text muted-helper-text">파일 업로드는 위쪽 큰 박스에서 먼저 진행해 주세요.</p>}
 
             {sourceItems.length ? (
               <div className="inline-info-card source-file-card">
@@ -1912,50 +1945,85 @@ function App() {
 
   const renderHome = () => (
     <div className="page-stack tool-home-stack">
-      <section className="workspace-shell">
-        <div className="workspace-topbar">
-          <div>
-            <p className="workspace-label">image utility</p>
-            <h1>이미지 변환 툴 허브</h1>
-            <p className="workspace-subtitle">업로드 → 설정 → 변환 → 다운로드 흐름이 먼저 보이도록 정리한 이미지 도구입니다.</p>
-          </div>
-          <div className="workspace-mini-stats">
-            <span>JPG / PNG / WEBP 출력</span>
-            <span>HEIC / PDF / TIFF / PSD 입력</span>
-            <span>일괄 변환 / ZIP 다운로드</span>
-          </div>
+      <section className="workspace-shell home-hero-shell">
+        <div className="home-hero-copy">
+          <p className="workspace-label">image utility</p>
+          <h1>이미지 변환 툴 허브</h1>
+          <p className="workspace-subtitle">파일을 올리고 원하는 작업만 고르면 됩니다.</p>
         </div>
-        {renderWorkbench(true)}
+
+        <div className="home-primary-grid">
+          {renderUploadBox('upload-box home-upload-box')}
+
+          <section className="surface-soft home-tool-choice-panel">
+            <div className="home-tool-choice-head">
+              <div>
+                <p className="eyebrow">2. 툴 선택</p>
+                <h2>어떤 작업을 할까요?</h2>
+                <p>선택한 작업은 바로 아래 세부 설정에 반영됩니다.</p>
+              </div>
+              <span className="helper-pill home-selected-pill">{mode === 'optimize' ? '압축 / 리사이즈' : `${targetLabel} 변환`}</span>
+            </div>
+            <div className="preset-grid home-choice-grid">{renderPresetButtons('preset-card home-preset-card')}</div>
+            <div className="home-choice-footer">
+              <span>{sourceItems.length ? `${sourceItems.length}개 파일 준비됨` : '업로드 후 아래에서 바로 이어서 작업하면 됩니다.'}</span>
+              <button type="button" className="ghost-button" onClick={scrollToWorkbenchDetails}>
+                세부 설정 보기
+              </button>
+            </div>
+          </section>
+        </div>
       </section>
 
-      <section className="utility-dock-grid">
-        <article className="quiet-panel dock-card dock-info-card">
-          <p className="card-kicker">읽기용 안내</p>
-          <h3>핵심 작업 범위</h3>
-          <ul className="bullet-list tight">
-            <li>여러 파일 일괄 변환</li>
-            <li>JPG / PNG / WEBP 출력</li>
-            <li>HEIC / HEIF / PDF / TIFF / PSD 입력 지원</li>
-            <li>압축 품질 조절 + 비율 유지 리사이즈</li>
-          </ul>
-        </article>
-        <article className="quiet-panel dock-card dock-info-card">
-          <p className="card-kicker">읽기용 안내</p>
-          <h3>파일 처리 방식</h3>
-          <p>가능한 한 브라우저 안에서 처리하고, 업로드 파일을 장기 보관하지 않는 방향으로 설계하고 있습니다. 민감한 파일은 업로드 전에 한 번 더 확인해 주세요.</p>
-        </article>
-        <article className="quiet-panel dock-card guide-dock-card">
-          <p className="card-kicker">클릭 가능한 가이드</p>
-          <h3>설명이 필요하면 여기서만 읽기</h3>
-          <div className="mini-guide-list">
-            {guides.slice(0, 3).map((guide) => (
-              <button key={guide.slug} type="button" className="mini-guide-item" onClick={() => navigate(`/guides/${guide.slug}`)}>
-                <strong>{guide.title}</strong>
-                <span>{guide.readingTime}</span>
-              </button>
-            ))}
+      <section id="home-workspace-detail" className="workspace-shell home-detail-shell">
+        <div className="section-heading home-detail-heading">
+          <div>
+            <p className="eyebrow">workspace</p>
+            <h2>세부 설정 / 결과</h2>
+            <p>품질, 크기, 특수 파일 옵션은 아래에서 조절하세요.</p>
           </div>
-        </article>
+        </div>
+        {renderWorkbench({ includeHeading: false, includeFlowStrip: false, includePresetPanel: false, includeUploadBox: false })}
+      </section>
+
+      <section className="home-reading-section">
+        <div className="section-heading home-reading-heading">
+          <div>
+            <p className="eyebrow">안내</p>
+            <h2>설명은 아래에만 모았습니다</h2>
+            <p>먼저 작업하고, 필요할 때만 읽을 수 있게 짧게 정리했습니다.</p>
+          </div>
+        </div>
+
+        <div className="utility-dock-grid home-reading-grid">
+          <article className="quiet-panel dock-card dock-info-card static-info-card">
+            <p className="card-kicker">지원 범위</p>
+            <h3>바로 처리 가능한 작업</h3>
+            <ul className="bullet-list tight">
+              <li>여러 파일 일괄 변환</li>
+              <li>JPG / PNG / WEBP 출력</li>
+              <li>HEIC / HEIF / PDF / TIFF / PSD 입력</li>
+              <li>압축 품질 조절 + 비율 유지 리사이즈</li>
+            </ul>
+          </article>
+          <article className="quiet-panel dock-card dock-info-card static-info-card">
+            <p className="card-kicker">처리 방식</p>
+            <h3>파일은 가능한 브라우저 안에서 처리</h3>
+            <p>업로드 파일을 장기 보관하지 않는 방향으로 설계하고 있습니다. 민감한 파일이라면 변환 전에 한 번 더 확인해 주세요.</p>
+          </article>
+          <article className="quiet-panel dock-card guide-dock-card">
+            <p className="card-kicker">가이드</p>
+            <h3>설명이 더 필요하면 여기서만 읽기</h3>
+            <div className="mini-guide-list">
+              {guides.slice(0, 3).map((guide) => (
+                <button key={guide.slug} type="button" className="mini-guide-item" onClick={() => navigate(`/guides/${guide.slug}`)}>
+                  <strong>{guide.title}</strong>
+                  <span>{guide.readingTime}</span>
+                </button>
+              ))}
+            </div>
+          </article>
+        </div>
       </section>
     </div>
   )
@@ -1970,7 +2038,7 @@ function App() {
             <p className="workspace-subtitle">업로드 → 설정 → 변환 → 다운로드 흐름으로 바로 작업할 수 있습니다.</p>
           </div>
         </div>
-        {renderWorkbench(false)}
+        {renderWorkbench()}
       </section>
     </div>
   )
