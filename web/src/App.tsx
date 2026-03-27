@@ -1231,8 +1231,8 @@ function App() {
     : mode === 'optimize'
       ? '용량을 많이 줄이고 싶다면 70~85%부터 비교해 보시는 것을 권장합니다.'
       : targetFormat === 'image/webp'
-        ? '사진은 80~88% 정도에서 많이 쓰이지만, PNG·SVG·이미 최적화된 WEBP는 더 커질 수 있어 결과 용량 비교가 중요합니다.'
-        : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다. HEIC, PDF, TIFF, PSD는 내부적으로 브라우저용 이미지로 바꾼 뒤 출력합니다.'
+        ? 'WEBP는 사진에서 유리한 경우가 많지만, PNG·SVG·작은 그래픽·이미 최적화된 WEBP는 더 커질 수 있습니다. 웹 업로드용이라도 결과 용량 비교가 중요합니다.'
+        : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다. HEIC, PDF, TIFF, PSD는 브라우저용 이미지로 먼저 풀어 처리하므로 원본 특성이 일부 단순화될 수 있습니다.'
   const batchProgressPercent = batchProgress ? Math.round((batchProgress.completedFiles / Math.max(1, batchProgress.totalFiles)) * 100) : 0
   const largerResultCount = useMemo(() => results.filter((item) => (item.sizeDeltaPercent ?? 0) > 0).length, [results])
   const hasFiles = sourceItems.length > 0
@@ -1711,14 +1711,14 @@ function App() {
     {
       key: 'webp',
       title: 'WEBP로 변환',
-      description: '사진 위주 웹 업로드',
+      description: '사진 위주 웹 업로드용',
       active: mode === 'convert' && targetFormat === 'image/webp',
       onClick: () =>
         applyPreset({
           mode: 'convert',
           format: 'image/webp',
           quality: 0.86,
-          notice: 'WEBP 프리셋을 적용했습니다. 사진은 줄어드는 경우가 많지만 PNG·이미 최적화된 파일은 더 커질 수 있습니다.',
+          notice: 'WEBP 프리셋을 적용했습니다. 사진은 줄어드는 경우가 많지만 투명 PNG·작은 그래픽·이미 최적화된 파일은 더 커질 수 있습니다.',
         }),
     },
     {
@@ -1954,7 +1954,7 @@ function App() {
             {targetFormat === 'image/webp' ? (
               <div className="warning-box">
                 <strong>WEBP 용량 안내</strong>
-                <p>사진은 줄어드는 경우가 많지만, 투명 PNG·SVG·작은 그래픽·이미 최적화된 WEBP는 오히려 커질 수 있습니다. 결과 용량을 보고 JPG/PNG도 비교해 보세요.</p>
+                <p>WEBP는 사진에서 유리한 경우가 많지만, 투명 PNG·SVG·작은 그래픽·이미 최적화된 WEBP는 오히려 커질 수 있습니다. 웹 업로드용이라도 결과 용량을 먼저 보고 JPG/PNG도 비교해 보세요.</p>
               </div>
             ) : null}
 
@@ -2136,7 +2136,7 @@ function App() {
           {targetFormat === 'image/webp' && largerResultCount > 0 ? (
             <div className="warning-box result-summary-warning">
               <strong>WEBP 결과 확인</strong>
-              <p>이번 결과 {largerResultCount}개는 원본보다 커졌습니다. 투명 PNG·작은 그래픽·이미 최적화된 WEBP에서는 자연스러운 편이라, 품질을 조금 낮추거나 JPG/PNG와 비교해 보세요.</p>
+              <p>이번 결과 {largerResultCount}개는 원본보다 커졌습니다. 투명 PNG·작은 그래픽·이미 최적화된 WEBP에서는 자연스러운 편입니다. 이럴 때는 품질을 조금 낮추거나 JPG/PNG 결과와 비교해 보세요.</p>
             </div>
           ) : null}
           <div className="results-list">
@@ -2223,7 +2223,7 @@ function App() {
             <ul className="bullet-list tight">
               <li>여러 파일 일괄 변환</li>
               <li>JPG / PNG / WEBP 출력</li>
-              <li>HEIC / HEIF / PDF / TIFF / PSD 입력(일부 제한 있음)</li>
+              <li>HEIC / HEIF / PDF / TIFF / PSD 입력(브라우저 처리 범위 안에서, 일부 제한 있음)</li>
               <li>압축 품질 조절 + 비율 유지 리사이즈</li>
             </ul>
           </article>

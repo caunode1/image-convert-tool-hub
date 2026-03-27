@@ -8,7 +8,10 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "deploy": "npm run build && npx wrangler pages deploy dist --project-name image-convert-tool-hub"
+    "deploy": "npm run build && npx wrangler pages deploy dist --project-name image-convert-tool-hub",
+    "qa:live": "node tmp-verification/validate-live-20260327.mjs",
+    "qa:caveats": "node tmp-verification/validate-caveats.mjs",
+    "qa:caveats:local": "BASE_URL=http://127.0.0.1:4173 OUT_NAME=20260327_caveat_validation_local.json node tmp-verification/validate-caveats.mjs"
   },
   "dependencies": {
     "ag-psd": "^30.1.0",
