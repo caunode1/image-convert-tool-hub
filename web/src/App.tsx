@@ -683,7 +683,17 @@ function buildPsdFallbackComposite(psd: { width?: number; height?: number; child
 
 async function renderPsdToPngBlob(file: File) {
   const { readPsd } = await import('ag-psd')
-  const psd = readPsd(await file.arrayBuffer(), { skipLayerImageData: false, skipThumbnail: true })
+  let psd: ReturnType<typeof readPsd>
+
+  try {
+    psd = readPsd(await file.arrayBuffer(), { skipLayerImageData: false, skipThumbnail: true })
+  } catch (readError) {
+    const message = getErrorMessage(readError)
+    if (message.includes('Offset is outside the bounds of the DataView') || message.includes('DataView')) {
+      throw new Error('PSD 합성 미리보기를 읽지 못했습니다. 최대 호환성(Composite preview)을 켠 PSD인지 확인해 주세요.')
+    }
+    throw readError
+  }
 
   if (psd.bitsPerChannel && psd.bitsPerChannel !== 8) {
     throw new Error('16bit 이상 PSD는 아직 미리보기 변환 범위 밖입니다.')
