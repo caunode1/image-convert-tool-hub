@@ -1563,7 +1563,17 @@ function App() {
 
   const renderPresetButtons = (cardClassName = 'preset-card') =>
     presetChoices.map((item) => (
-      <button type="button" key={item.key} className={`${cardClassName}${item.active ? ' active' : ''}`} onClick={item.onClick}>
+      <button
+        type="button"
+        key={item.key}
+        className={`${cardClassName}${item.active ? ' active' : ''}`}
+        onClick={item.onClick}
+        aria-pressed={item.active}
+      >
+        <div className="preset-card-top">
+          <span className="preset-card-badge">{item.active ? '현재 선택' : '클릭 적용'}</span>
+          <span className="preset-card-arrow" aria-hidden="true">→</span>
+        </div>
         <strong>{item.title}</strong>
         <span>{item.description}</span>
       </button>
@@ -1605,32 +1615,38 @@ function App() {
           ) : null}
 
           {includeFlowStrip ? (
-            <div className="flow-strip" aria-label="작업 흐름">
-              {[
-                { step: 1, title: '업로드', detail: '파일 선택' },
-                { step: 2, title: '설정', detail: '형식 / 품질' },
-                { step: 3, title: '변환', detail: '일괄 처리' },
-                { step: 4, title: '다운로드', detail: '개별 / ZIP' },
-              ].map((item) => {
-                const stateClass = currentFlowStep === item.step ? 'is-current' : currentFlowStep > item.step ? 'is-done' : ''
-                return (
-                  <div key={item.step} className={`flow-step ${stateClass}`.trim()}>
-                    <span className="flow-index">{item.step}</span>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <small>{item.detail}</small>
+            <section className="flow-strip-shell" aria-label="작업 흐름 안내">
+              <div className="flow-strip-head">
+                <p className="eyebrow">작업 흐름 안내</p>
+                <span>아래 순서대로 진행하면 됩니다.</span>
+              </div>
+              <div className="flow-strip" aria-label="작업 흐름">
+                {[
+                  { step: 1, title: '업로드', detail: '파일 선택' },
+                  { step: 2, title: '설정', detail: '형식 / 품질' },
+                  { step: 3, title: '변환', detail: '일괄 처리' },
+                  { step: 4, title: '다운로드', detail: '개별 / ZIP' },
+                ].map((item) => {
+                  const stateClass = currentFlowStep === item.step ? 'is-current' : currentFlowStep > item.step ? 'is-done' : ''
+                  return (
+                    <div key={item.step} className={`flow-step ${stateClass}`.trim()}>
+                      <span className="flow-index">{item.step}</span>
+                      <div>
+                        <strong>{item.title}</strong>
+                        <small>{item.detail}</small>
+                      </div>
                     </div>
-                  </div>
-                )
-              })}
-            </div>
+                  )
+                })}
+              </div>
+            </section>
           ) : null}
 
           {includePresetPanel ? (
             <section className="preset-panel compact-preset-panel">
               <div className="preset-panel-head">
                 <p className="eyebrow">원클릭 프리셋</p>
-                <span>자주 쓰는 조합만 먼저 골라두었습니다.</span>
+                <span>클릭하면 아래 설정에 바로 반영됩니다.</span>
               </div>
               <div className="preset-grid">{renderPresetButtons()}</div>
             </section>
@@ -1848,49 +1864,62 @@ function App() {
             </div>
           </form>
         </section>
+      </div>
 
-        <aside className="surface-soft side-panel quiet-panel">
-          <div className="side-panel-intro">
+      <section className="surface-soft workbench-summary-panel quiet-panel" aria-label="작업 요약">
+        <div className="workbench-summary-head">
+          <div>
             <p className="eyebrow">status</p>
             <h2>작업 요약</h2>
-            <p>왼쪽은 실제로 클릭하며 작업하는 공간이고, 오른쪽은 현재 상태를 보는 영역입니다.</p>
+            <p>메인 작업 아래에서 현재 단계와 설정만 가볍게 확인할 수 있습니다.</p>
           </div>
+          {results.length ? (
+            <button type="button" className="secondary-button" onClick={downloadAllAsZip}>
+              ZIP으로 전체 다운로드
+            </button>
+          ) : null}
+        </div>
 
-          <div className="next-step-card">
+        <div className="workbench-summary-grid">
+          <article className="summary-card calm-summary-card">
             <p className="card-kicker">지금 단계</p>
             <strong>{flowSummaryTitle}</strong>
             <p>{flowSummaryText}</p>
-          </div>
+          </article>
 
-          {sourceItems.length ? (
-            <div className="side-panel-block">
+          <article className="summary-card calm-summary-card">
+            <p className="card-kicker">현재 설정</p>
+            {sourceItems.length ? (
               <ul className="bullet-list tight">
                 <li>선택 파일 수: {sourceItems.length}개</li>
                 <li>첫 파일 형식: {originalLabel}</li>
                 <li>출력 형식: {targetLabel}</li>
                 <li>처리 모드: {mode === 'convert' ? '포맷 변환' : '압축 / 리사이즈'}</li>
                 {hasAnimatedGif ? <li>GIF 처리: {effectiveGifSummary.label}</li> : null}
-                <li>지원 입력: {SUPPORTED_INPUT_COPY}</li>
-                <li>{RAW_INPUT_COPY}</li>
               </ul>
-            </div>
-          ) : (
-            <p className="side-panel-note">여러 파일을 올리면 여기서 작업 상태를 빠르게 확인하실 수 있습니다.</p>
-          )}
+            ) : (
+              <p>파일을 올리면 여기서 현재 설정과 진행 단계를 확인할 수 있습니다.</p>
+            )}
+          </article>
 
-          {results.length ? (
-            <div className="result-box">
-              <strong>4. 다운로드 준비 완료</strong>
-              <p>생성 결과 수: {results.length}개</p>
-              <p>출력 형식: {mimeToLabel(results[0].mimeType)}</p>
-              {batchProgress ? <p>성공 {batchProgress.successFiles}개 · 실패 {batchProgress.failedFiles}개</p> : null}
-              <button type="button" className="secondary-button full-width" onClick={downloadAllAsZip}>
-                ZIP으로 전체 다운로드
-              </button>
-            </div>
-          ) : null}
-        </aside>
-      </div>
+          <article className={`summary-card ${results.length ? 'action-summary-card' : 'calm-summary-card'}`}>
+            <p className="card-kicker">참고</p>
+            {results.length ? (
+              <>
+                <strong>다운로드 준비 완료</strong>
+                <p>생성 결과 {results.length}개 · 출력 형식 {mimeToLabel(results[0].mimeType)}</p>
+                {batchProgress ? <small>성공 {batchProgress.successFiles}개 · 실패 {batchProgress.failedFiles}개</small> : null}
+              </>
+            ) : (
+              <>
+                <strong>지원 형식</strong>
+                <p>{SUPPORTED_INPUT_COPY}</p>
+                <small>{RAW_INPUT_COPY}</small>
+              </>
+            )}
+          </article>
+        </div>
+      </section>
 
       {sourceItems.length ? (
         <section className="surface-card preview-panel">
