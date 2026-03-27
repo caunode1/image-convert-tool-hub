@@ -1336,8 +1336,7 @@ button {
   }
 }
 
-@media (max-width: 420px) {
-  .nav-links,
+@media (max-width: 360px) {
   .preset-grid,
   .home-choice-grid,
   .flow-strip {
