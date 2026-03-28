@@ -567,4 +567,37 @@ export const staticPages: Record<string, StaticPage> = {
       },
     ],
   },
+  status: {
+    title: '검증 및 운영 현황',
+    description: '현재 라이브 검증 범위와 남은 caveat, 운영 상태 공개',
+    intro: '이 페이지는 현재 공개 버전에서 실제로 확인된 항목과 아직 제한으로 남아 있는 부분을 숨기지 않고 공개하기 위한 상태 페이지입니다.',
+    sections: [
+      {
+        heading: '현재 라이브에서 확인된 것',
+        bullets: [
+          '다중 업로드, 포맷 변환, ZIP 다운로드가 실제 라이브 사이트에서 동작 확인됨',
+          'PDF 1페이지/다페이지, GIF poster/framesheet, TIFF 경로 확인됨',
+          '리사이즈 + 압축 워크플로우와 파일별 상태 표시 확인됨',
+          '사이트맵 기준 주요 URL 19개는 HTTP 200 응답 확인됨',
+        ],
+      },
+      {
+        heading: '현재 남은 caveat',
+        bullets: [
+          '무료 pages.dev 도메인이라 커스텀 도메인보다 신뢰 신호가 약함',
+          '모바일은 반응형 기준 통과지만 실기기 터치 QA는 더 필요함',
+          'HEIF/PSD의 복잡한 변형은 샘플 범위를 더 넓혀야 함',
+          'Search Console의 첫 사이트맵 fetch는 지연/오류가 발생할 수 있어 계속 확인 중임',
+        ],
+      },
+      {
+        heading: '운영 원칙',
+        bullets: [
+          '기능이 된다고 과장하지 않고, pass / caveat 관점으로 공개함',
+          '정책, FAQ, 문의, 방법론 문서를 같이 운영함',
+          '업데이트와 검증 흔적을 사이트 안에서 확인할 수 있게 유지함',
+        ],
+      },
+    ],
+  },
 } as const

@@ -2428,6 +2428,10 @@ function App() {
                 <strong>FAQ</strong>
                 <span>제한 사항</span>
               </button>
+              <button type="button" className="mini-guide-item" onClick={() => navigate('/status')}>
+                <strong>검증 현황</strong>
+                <span>운영 상태</span>
+              </button>
               <button type="button" className="mini-guide-item" onClick={() => navigate('/contact')}>
                 <strong>문의</strong>
                 <span>운영 메일</span>
@@ -2521,6 +2525,7 @@ function App() {
   const footerItems = [
     { label: '소개', path: '/about' },
     { label: '방법론', path: '/methodology' },
+    { label: '검증 현황', path: '/status' },
     { label: '개인정보처리방침', path: '/privacy' },
     { label: '이용안내', path: '/terms' },
     { label: 'FAQ', path: '/faq' },
