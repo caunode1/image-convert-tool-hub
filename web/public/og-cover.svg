@@ -1,0 +1,26 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="90" y1="60" x2="1110" y2="570" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1020"/>
+      <stop offset="0.55" stop-color="#111A2D"/>
+      <stop offset="1" stop-color="#18112A"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="238" y1="120" x2="980" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7C9CFF"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" rx="36" fill="url(#bg)"/>
+  <circle cx="1028" cy="102" r="152" fill="#7C9CFF" fill-opacity="0.08"/>
+  <circle cx="180" cy="540" r="210" fill="#8B5CF6" fill-opacity="0.1"/>
+  <rect x="78" y="78" width="1044" height="474" rx="28" fill="#0F1726" fill-opacity="0.92" stroke="#334155"/>
+  <rect x="124" y="124" width="108" height="108" rx="28" fill="url(#brand)"/>
+  <text x="178" y="194" text-anchor="middle" fill="#08111D" font-size="48" font-family="Arial, sans-serif" font-weight="700">IH</text>
+  <text x="278" y="186" fill="#EEF2FF" font-size="52" font-family="Arial, sans-serif" font-weight="700">이미지 변환 툴 허브</text>
+  <text x="278" y="238" fill="#9FB0D8" font-size="26" font-family="Arial, sans-serif">Image Convert Tool Hub</text>
+  <text x="126" y="332" fill="#EEF2FF" font-size="34" font-family="Arial, sans-serif" font-weight="700">브라우저 안에서 바로 변환 · 압축 · 리사이즈</text>
+  <text x="126" y="384" fill="#9FB0D8" font-size="24" font-family="Arial, sans-serif">JPG / PNG / WEBP 출력 · HEIC / PDF / TIFF / PSD 입력 지원</text>
+  <text x="126" y="426" fill="#9FB0D8" font-size="24" font-family="Arial, sans-serif">가이드 · FAQ · 정책 페이지까지 함께 운영하는 실용형 이미지 도구 사이트</text>
+  <rect x="126" y="474" width="246" height="52" rx="26" fill="#172238" stroke="#334155"/>
+  <text x="249" y="507" text-anchor="middle" fill="#C7D2FE" font-size="22" font-family="Arial, sans-serif" font-weight="700">image-convert-tool-hub.pages.dev</text>
+</svg>

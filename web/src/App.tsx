@@ -53,6 +53,25 @@ const SVG_FALLBACK_SIZE = 1024
 const DEFAULT_SVG_RASTER_SCALE: SvgRasterScale = 2
 const MAX_VECTOR_RENDER_DIMENSION = 4096
 const MAX_GIF_SHEET_FRAMES = 12
+const DEFAULT_OG_IMAGE_URL = `${siteInfo.siteUrl}/og-cover.svg`
+const RECENT_SITE_UPDATES = [
+  '가이드/FAQ/방법론/문의 페이지를 함께 운영합니다.',
+  'WEBP·HEIC/HEIF·PDF·PSD·TIFF 관련 설명 문서를 계속 보강합니다.',
+  'robots.txt / sitemap.xml / canonical 구조를 유지합니다.',
+  '특수 포맷은 되는 범위와 제한을 같이 공개합니다.',
+] as const
+const VALIDATION_HIGHLIGHTS = [
+  '다중 업로드, 포맷 변환, ZIP 다운로드가 라이브에서 동작 확인됨',
+  'PDF 1페이지/다페이지, GIF poster/framesheet, TIFF 경로 확인됨',
+  '리사이즈 + 압축 워크플로우와 파일별 상태 표시 확인됨',
+  '현재 기준 크리티컬 실패는 재현되지 않음',
+] as const
+const CURRENT_LIMITATIONS = [
+  '무료 pages.dev 도메인이라 커스텀 도메인보다 신뢰 신호가 약합니다.',
+  '모바일은 반응형 기준 통과지만 실기기 터치 QA는 더 필요합니다.',
+  'HEIF/PSD의 복잡한 변형은 샘플 범위를 더 넓혀야 합니다.',
+  'Search Console 등록과 인덱싱 확인은 아직 남아 있습니다.',
+] as const
 
 const RAW_FILE_EXTENSIONS = new Set([
   '.3fr',
@@ -204,6 +223,17 @@ function ensureMetaByProperty(name: string) {
   if (!tag) {
     tag = document.createElement('meta')
     tag.setAttribute('property', name)
+    document.head.appendChild(tag)
+  }
+  return tag
+}
+
+function ensureJsonLdScript(id: string) {
+  let tag = document.querySelector(`#${id}`) as HTMLScriptElement | null
+  if (!tag) {
+    tag = document.createElement('script')
+    tag.type = 'application/ld+json'
+    tag.id = id
     document.head.appendChild(tag)
   }
   return tag
@@ -1295,6 +1325,118 @@ function App() {
     return { title: `${siteInfo.name} | 여러 이미지 파일을 한 번에 변환하는 도구`, description: siteInfo.description }
   }, [currentGuide, path])
 
+  const structuredData = useMemo(() => {
+    const currentUrl = toCanonicalUrl(path)
+    const graph: Record<string, unknown>[] = [
+      {
+        '@type': 'Organization',
+        '@id': `${siteInfo.siteUrl}#organization`,
+        name: siteInfo.name,
+        url: siteInfo.siteUrl,
+        email: siteInfo.contactEmail,
+      },
+      {
+        '@type': 'WebSite',
+        '@id': `${siteInfo.siteUrl}#website`,
+        name: siteInfo.name,
+        url: siteInfo.siteUrl,
+        inLanguage: 'ko-KR',
+      },
+    ]
+
+    if (path === '/' || path === '/tool') {
+      graph.push(
+        {
+          '@type': 'WebPage',
+          '@id': `${currentUrl}#webpage`,
+          url: currentUrl,
+          name: seoMeta.title,
+          description: seoMeta.description,
+          isPartOf: { '@id': `${siteInfo.siteUrl}#website` },
+          inLanguage: 'ko-KR',
+        },
+        {
+          '@type': 'SoftwareApplication',
+          name: siteInfo.name,
+          applicationCategory: 'UtilitiesApplication',
+          operatingSystem: 'Web',
+          isAccessibleForFree: true,
+          offers: {
+            '@type': 'Offer',
+            price: '0',
+            priceCurrency: 'USD',
+          },
+          description: siteInfo.description,
+          url: currentUrl,
+          image: DEFAULT_OG_IMAGE_URL,
+        },
+      )
+    } else if (path === '/guides') {
+      graph.push({
+        '@type': 'CollectionPage',
+        '@id': `${currentUrl}#collection`,
+        url: currentUrl,
+        name: seoMeta.title,
+        description: seoMeta.description,
+        hasPart: guides.map((guide) => ({
+          '@type': 'Article',
+          headline: guide.title,
+          url: toCanonicalUrl(`/guides/${guide.slug}`),
+        })),
+        inLanguage: 'ko-KR',
+      })
+    } else if (currentGuide) {
+      graph.push({
+        '@type': 'Article',
+        '@id': `${currentUrl}#article`,
+        headline: currentGuide.title,
+        description: currentGuide.description,
+        dateModified: currentGuide.updated,
+        datePublished: currentGuide.updated,
+        inLanguage: 'ko-KR',
+        mainEntityOfPage: currentUrl,
+        url: currentUrl,
+        author: {
+          '@id': `${siteInfo.siteUrl}#organization`,
+        },
+        publisher: {
+          '@id': `${siteInfo.siteUrl}#organization`,
+        },
+        image: DEFAULT_OG_IMAGE_URL,
+      })
+    } else if (path === '/faq') {
+      graph.push({
+        '@type': 'FAQPage',
+        '@id': `${currentUrl}#faq`,
+        url: currentUrl,
+        name: seoMeta.title,
+        mainEntity: staticPages.faq.sections.map((section) => ({
+          '@type': 'Question',
+          name: section.heading,
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: (section.paragraphs ?? section.bullets ?? []).join(' '),
+          },
+        })),
+        inLanguage: 'ko-KR',
+      })
+    } else if (staticPages[staticKey as keyof typeof staticPages]) {
+      graph.push({
+        '@type': 'WebPage',
+        '@id': `${currentUrl}#page`,
+        url: currentUrl,
+        name: seoMeta.title,
+        description: seoMeta.description,
+        inLanguage: 'ko-KR',
+      })
+    }
+
+    return {
+      '@context': 'https://schema.org',
+      '@graph': graph,
+    }
+  }, [currentGuide, path, seoMeta.description, seoMeta.title, staticKey])
+
   useEffect(() => {
     const onPopState = () => setPath(normalizePath(window.location.pathname))
     window.addEventListener('popstate', onPopState)
@@ -1302,17 +1444,27 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const canonicalUrl = toCanonicalUrl(path)
+    const ogType = currentGuide ? 'article' : path === '/faq' ? 'website' : 'website'
+
     document.title = seoMeta.title
     ensureMetaByName('description').setAttribute('content', seoMeta.description)
     ensureMetaByName('author').setAttribute('content', siteInfo.name)
     ensureMetaByName('robots').setAttribute('content', 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1')
+    ensureMetaByName('theme-color').setAttribute('content', '#0a0f1c')
+    ensureMetaByName('referrer').setAttribute('content', 'strict-origin-when-cross-origin')
     ensureMetaByProperty('og:title').setAttribute('content', seoMeta.title)
     ensureMetaByProperty('og:description').setAttribute('content', seoMeta.description)
-    ensureMetaByProperty('og:type').setAttribute('content', 'website')
+    ensureMetaByProperty('og:type').setAttribute('content', ogType)
     ensureMetaByProperty('og:site_name').setAttribute('content', siteInfo.name)
     ensureMetaByProperty('og:locale').setAttribute('content', 'ko_KR')
-    ensureMetaByProperty('og:url').setAttribute('content', toCanonicalUrl(path))
+    ensureMetaByProperty('og:url').setAttribute('content', canonicalUrl)
+    ensureMetaByProperty('og:image').setAttribute('content', DEFAULT_OG_IMAGE_URL)
+    ensureMetaByProperty('og:image:alt').setAttribute('content', `${siteInfo.name} 미리보기 이미지`)
     ensureMetaByName('twitter:card').setAttribute('content', 'summary_large_image')
+    ensureMetaByName('twitter:title').setAttribute('content', seoMeta.title)
+    ensureMetaByName('twitter:description').setAttribute('content', seoMeta.description)
+    ensureMetaByName('twitter:image').setAttribute('content', DEFAULT_OG_IMAGE_URL)
 
     let canonical = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null
     if (!canonical) {
@@ -1320,8 +1472,11 @@ function App() {
       canonical.rel = 'canonical'
       document.head.appendChild(canonical)
     }
-    canonical.href = toCanonicalUrl(path)
-  }, [path, seoMeta])
+    canonical.href = canonicalUrl
+
+    const jsonLd = ensureJsonLdScript('site-jsonld')
+    jsonLd.textContent = JSON.stringify(structuredData)
+  }, [currentGuide, path, seoMeta, structuredData])
 
   useEffect(() => {
     return () => {
@@ -2297,6 +2452,30 @@ function App() {
               <li>투명 배경이나 로고는 PNG를 우선 검토</li>
               <li>HEIC·PSD·PDF·TIFF는 결과를 직접 열어 확인</li>
               <li>중요한 원본은 별도로 보관</li>
+            </ul>
+          </article>
+        </div>
+
+        <div className="utility-dock-grid home-reading-grid">
+          <article className="quiet-panel dock-card dock-info-card static-info-card">
+            <p className="card-kicker">최근 보강</p>
+            <h3>무료 도메인 상태에서도 신뢰를 올리기 위해 한 것</h3>
+            <ul className="bullet-list tight">
+              {RECENT_SITE_UPDATES.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </article>
+          <article className="quiet-panel dock-card dock-info-card static-info-card">
+            <p className="card-kicker">검증 상태</p>
+            <h3>현재 라이브에서 확인된 핵심 흐름</h3>
+            <ul className="bullet-list tight">
+              {VALIDATION_HIGHLIGHTS.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </article>
+          <article className="quiet-panel dock-card dock-info-card static-info-card">
+            <p className="card-kicker">아직 남은 caveat</p>
+            <h3>지금 단계에서 숨기지 않는 제한</h3>
+            <ul className="bullet-list tight">
+              {CURRENT_LIMITATIONS.map((item) => <li key={item}>{item}</li>)}
             </ul>
           </article>
         </div>
