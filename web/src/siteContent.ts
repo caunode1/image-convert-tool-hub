@@ -600,4 +600,79 @@ export const staticPages: Record<string, StaticPage> = {
       },
     ],
   },
+  updates: {
+    title: '업데이트 로그',
+    description: '기능 보강, 가이드 확장, 검증/운영 변경 내역 공개',
+    intro: '이 페이지는 사이트가 실제로 어떻게 업데이트되고 있는지 보여주기 위한 변경 로그입니다. 기능, 가이드, 정책, 검증 내역을 날짜 기준으로 공개합니다.',
+    sections: [
+      {
+        heading: '2026-03-29 — 운영/검증 문서 보강',
+        bullets: [
+          '검증 및 운영 현황 페이지(`/status`) 공개',
+          '주요 URL 200 응답 재점검 및 크롤링 관점 점검',
+          '무료 도메인 상태에서 신뢰 신호를 더 보강하는 방향으로 문서 정리',
+        ],
+      },
+      {
+        heading: '2026-03-28 — 가이드/신뢰 신호 확장',
+        bullets: [
+          '실사용 시나리오 가이드 3개 추가',
+          'OG 이미지, 구조화 데이터(JSON-LD), 검증 태그 추가',
+          '정책/FAQ/방법론/문의/검증 현황 페이지 연결 강화',
+        ],
+      },
+      {
+        heading: '2026-03-27 — 핵심 도구 안정화',
+        bullets: [
+          'PDF 업로드/변환 경로 수정 및 라이브 반영',
+          '다중 업로드, ZIP 다운로드, 리사이즈/압축 흐름 재검증',
+          'HEIC/HEIF/PSD/TIFF/GIF/PDF 경로에 대한 초기 라이브 QA 정리',
+        ],
+      },
+    ],
+  },
+  'supported-formats': {
+    title: '지원 포맷 및 제한',
+    description: '입력 포맷별 지원 범위, 출력 가능 경로, caveat를 한 번에 정리한 페이지',
+    intro: '이 페이지는 현재 공개 버전에서 어떤 입력을 어디까지 처리할 수 있는지, 그리고 어떤 경우에 caveat가 붙는지 빠르게 확인하기 위한 지원 포맷 매트릭스입니다.',
+    sections: [
+      {
+        heading: '출력 포맷',
+        bullets: [
+          'JPG — 호환성 우선, 일반 사진 출력에 적합',
+          'PNG — 선명도/투명 배경 우선, 그래픽/캡처에 적합',
+          'WEBP — 사진 위주 웹 업로드에 유리하지만 항상 더 작아지지는 않음',
+        ],
+      },
+      {
+        heading: '입력 포맷: 안정적으로 확인된 경로',
+        bullets: [
+          'JPG/JPEG → JPG/PNG/WEBP',
+          'PNG → JPG/PNG/WEBP (투명 배경은 JPG에서 채워질 수 있음)',
+          'WEBP → JPG/PNG/WEBP',
+          'BMP → JPG/PNG/WEBP',
+          'GIF → 대표 프레임 JPG/PNG/WEBP 또는 프레임 시트 PNG',
+          'SVG → PNG/JPG/WEBP로 래스터 변환',
+          'PDF → 페이지별 이미지 출력',
+          'TIFF → 브라우저가 읽을 수 있는 이미지 기준 출력',
+        ],
+      },
+      {
+        heading: '입력 포맷: caveat가 붙는 경로',
+        bullets: [
+          'HEIC/HEIF — 일반 샘플은 통과했지만 특수 HEIF 변형은 추가 검증 필요',
+          'PSD — 일반 composite preview PSD는 통과했지만 16-bit/복잡 효과는 추가 검증 필요',
+          'WEBP 재저장 — 이미 최적화된 파일은 결과가 더 커질 수 있음',
+        ],
+      },
+      {
+        heading: '아직 미지원',
+        bullets: [
+          'RAW 계열(NEF/CR2/ARW/DNG 등)',
+          '문서·영상·압축파일 같은 범용 포맷 전체',
+          '브라우저 해석 범위를 넘는 일부 복잡 PSD/HEIF 변형',
+        ],
+      },
+    ],
+  },
 } as const

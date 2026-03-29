@@ -1247,6 +1247,7 @@ function App() {
 
   const currentGuide = useMemo(() => guides.find((guide) => `/guides/${guide.slug}` === path) ?? null, [path])
   const staticKey = useMemo(() => path.replace('/', ''), [path])
+  const currentStaticPage = useMemo(() => staticPages[staticKey as keyof typeof staticPages] ?? null, [staticKey])
   const firstSource = sourceItems[0] ?? null
   const firstResult = results[0] ?? null
   const originalMime = firstSource?.mimeType ?? ''
@@ -1316,14 +1317,9 @@ function App() {
   const seoMeta = useMemo(() => {
     if (currentGuide) return { title: `${currentGuide.title} | ${siteInfo.name}`, description: currentGuide.description }
     if (path === '/guides') return { title: `가이드 모음 | ${siteInfo.name}`, description: '이미지 변환, 압축, 리사이즈와 관련된 실용 가이드를 모아 둔 페이지입니다.' }
-    if (path === '/about') return { title: `소개 | ${siteInfo.name}`, description: staticPages.about.description }
-    if (path === '/methodology') return { title: `방법론 | ${siteInfo.name}`, description: staticPages.methodology.description }
-    if (path === '/privacy') return { title: `개인정보처리방침 | ${siteInfo.name}`, description: staticPages.privacy.description }
-    if (path === '/terms') return { title: `이용안내 | ${siteInfo.name}`, description: staticPages.terms.description }
-    if (path === '/contact') return { title: `문의 | ${siteInfo.name}`, description: staticPages.contact.description }
-    if (path === '/faq') return { title: `자주 묻는 질문 | ${siteInfo.name}`, description: staticPages.faq.description }
+    if (currentStaticPage) return { title: `${currentStaticPage.title} | ${siteInfo.name}`, description: currentStaticPage.description }
     return { title: `${siteInfo.name} | 여러 이미지 파일을 한 번에 변환하는 도구`, description: siteInfo.description }
-  }, [currentGuide, path])
+  }, [currentGuide, currentStaticPage, path])
 
   const structuredData = useMemo(() => {
     const currentUrl = toCanonicalUrl(path)
@@ -1435,7 +1431,7 @@ function App() {
       '@context': 'https://schema.org',
       '@graph': graph,
     }
-  }, [currentGuide, path, seoMeta.description, seoMeta.title, staticKey])
+  }, [currentGuide, currentStaticPage, path, seoMeta.description, seoMeta.title, staticKey])
 
   useEffect(() => {
     const onPopState = () => setPath(normalizePath(window.location.pathname))
@@ -2432,6 +2428,10 @@ function App() {
                 <strong>검증 현황</strong>
                 <span>운영 상태</span>
               </button>
+              <button type="button" className="mini-guide-item" onClick={() => navigate('/updates')}>
+                <strong>업데이트 로그</strong>
+                <span>최근 변경</span>
+              </button>
               <button type="button" className="mini-guide-item" onClick={() => navigate('/contact')}>
                 <strong>문의</strong>
                 <span>운영 메일</span>
@@ -2483,6 +2483,42 @@ function App() {
             </ul>
           </article>
         </div>
+
+        <div className="utility-dock-grid home-reading-grid">
+          <article className="quiet-panel dock-card guide-dock-card">
+            <p className="card-kicker">운영 흔적</p>
+            <h3>최근 변경 내역과 업데이트 기록</h3>
+            <div className="mini-guide-list">
+              <button type="button" className="mini-guide-item" onClick={() => navigate('/updates')}>
+                <strong>업데이트 로그</strong>
+                <span>날짜별 변경 내역</span>
+              </button>
+              <button type="button" className="mini-guide-item" onClick={() => navigate('/status')}>
+                <strong>검증 및 운영 현황</strong>
+                <span>현재 상태 공개</span>
+              </button>
+            </div>
+          </article>
+          <article className="quiet-panel dock-card dock-info-card static-info-card">
+            <p className="card-kicker">지원 범위 한눈에 보기</p>
+            <h3>입력 포맷과 제한을 따로 정리</h3>
+            <p>지원 포맷, 출력 가능 경로, 아직 caveat가 붙는 포맷은 별도 문서에서 한 번에 볼 수 있게 정리합니다.</p>
+            <div className="button-row">
+              <button type="button" className="ghost-button" onClick={() => navigate('/supported-formats')}>
+                지원 포맷 보기
+              </button>
+            </div>
+          </article>
+          <article className="quiet-panel dock-card dock-info-card static-info-card">
+            <p className="card-kicker">실사용 시나리오</p>
+            <h3>왜 이 사이트를 쓰는지 맥락까지 제공</h3>
+            <ul className="bullet-list tight">
+              <li>블로그·쇼핑몰 업로드용 이미지 정리 기준</li>
+              <li>용량 줄일 때 자주 하는 실수와 회피법</li>
+              <li>PNG/JPG/WEBP를 실제 장면 기준으로 비교</li>
+            </ul>
+          </article>
+        </div>
       </section>
     </div>
   )
@@ -2526,6 +2562,8 @@ function App() {
     { label: '소개', path: '/about' },
     { label: '방법론', path: '/methodology' },
     { label: '검증 현황', path: '/status' },
+    { label: '업데이트 로그', path: '/updates' },
+    { label: '지원 포맷', path: '/supported-formats' },
     { label: '개인정보처리방침', path: '/privacy' },
     { label: '이용안내', path: '/terms' },
     { label: 'FAQ', path: '/faq' },
