@@ -110,6 +110,8 @@ let pdfWorkerConfigured = false
 let gifuctModulePromise: Promise<typeof import('gifuct-js')> | null = null
 let pdfModulePromise: Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> | null = null
 let pdfWorkerPromise: Promise<{ default: string }> | null = null
+const pdfArrayBufferCache = new WeakMap<File, Promise<ArrayBuffer>>()
+const pdfDocumentCache = new WeakMap<File, Promise<any>>()
 let heicModulePromise: Promise<typeof import('heic2any')> | null = null
 
 function loadGifuctModule() {
@@ -128,6 +130,74 @@ async function loadPdfModule() {
   }
 
   return pdfModule
+}
+
+function getPdfRenderScale(quality: PdfRenderQuality) {
+  if (quality === 'fast') return 1.15
+  if (quality === 'sharp') return 2
+  return 1.5
+}
+
+async function getPdfArrayBuffer(file: File) {
+  let cached = pdfArrayBufferCache.get(file)
+  if (!cached) {
+    cached = file.arrayBuffer()
+    pdfArrayBufferCache.set(file, cached)
+  }
+  return cached
+}
+
+async function openPdfDocument(file: File) {
+  let cached = pdfDocumentCache.get(file)
+  if (!cached) {
+    cached = (async () => {
+      const { getDocument } = await loadPdfModule()
+      try {
+        return await getDocument({ data: await getPdfArrayBuffer(file) }).promise
+      } catch (error) {
+        const message = getErrorMessage(error)
+        if (message.includes('PasswordException') || message.includes('password') || message.includes('암호')) {
+          throw new Error('암호 보호된 PDF는 현재 브라우저 버전에서 바로 열 수 없습니다.')
+        }
+        throw error
+      }
+    })()
+    pdfDocumentCache.set(file, cached)
+  }
+
+  try {
+    return await cached
+  } catch (error) {
+    pdfDocumentCache.delete(file)
+    throw error
+  }
+}
+
+function parsePdfPageSelection(input: string, totalPages: number) {
+  const normalized = input.replace(/\s+/g, '')
+  if (!normalized) throw new Error('PDF 페이지 범위를 입력해 주세요. 예: 1-3,5')
+
+  const pages = new Set<number>()
+  for (const token of normalized.split(',').filter(Boolean)) {
+    const rangeMatch = token.match(/^(\d+)-(\d+)$/)
+    if (rangeMatch) {
+      const start = Number(rangeMatch[1])
+      const end = Number(rangeMatch[2])
+      if (start < 1 || end < 1 || start > end) throw new Error(`잘못된 PDF 페이지 범위입니다: ${token}`)
+      if (end > totalPages) throw new Error(`PDF는 총 ${totalPages}페이지입니다. 범위를 다시 확인해 주세요.`)
+      for (let page = start; page <= end; page += 1) pages.add(page)
+      continue
+    }
+
+    const page = Number(token)
+    if (!Number.isInteger(page) || page < 1) throw new Error(`잘못된 PDF 페이지 번호입니다: ${token}`)
+    if (page > totalPages) throw new Error(`PDF는 총 ${totalPages}페이지입니다. ${page}페이지는 선택할 수 없습니다.`)
+    pages.add(page)
+  }
+
+  const sorted = [...pages].sort((a, b) => a - b)
+  if (!sorted.length) throw new Error('선택된 PDF 페이지가 없습니다.')
+  return sorted
 }
 
 async function loadHeicConverter() {
@@ -169,6 +239,9 @@ type FileSpecificOptions = {
   gifOutputMode?: GifOutputMode
   svgRasterScale?: SvgRasterScale
 }
+
+type PdfPageMode = 'all' | 'first' | 'range'
+type PdfRenderQuality = 'fast' | 'balanced' | 'sharp'
 
 type BatchItemState = 'queued' | 'processing' | 'success' | 'error'
 
@@ -555,11 +628,10 @@ async function rgbaToPngBlob(rgba: Uint8Array, width: number, height: number) {
   return canvasToPngBlob(canvas)
 }
 
-async function renderPdfPageToPngBlob(file: File, pageNumber = 1) {
-  const { getDocument } = await loadPdfModule()
-  const pdf = await getDocument({ data: await file.arrayBuffer() }).promise
+async function renderPdfPageToPngBlob(file: File, pageNumber = 1, renderQuality: PdfRenderQuality = 'balanced') {
+  const pdf = await openPdfDocument(file)
   const page = await pdf.getPage(pageNumber)
-  const viewport = page.getViewport({ scale: 1.5 })
+  const viewport = page.getViewport({ scale: getPdfRenderScale(renderQuality) })
   const canvas = document.createElement('canvas')
   canvas.width = Math.ceil(viewport.width)
   canvas.height = Math.ceil(viewport.height)
@@ -952,7 +1024,7 @@ async function prepareSourceItem(file: File): Promise<SourceItem> {
       sizeLabel: formatBytes(file.size),
       mimeType,
       pageCount: rendered.pageCount,
-      note: rendered.pageCount > 1 ? `PDF ${rendered.pageCount}페이지를 이미지로 순서대로 변환합니다.` : 'PDF 1페이지를 이미지로 변환합니다.',
+      note: rendered.pageCount > 1 ? `PDF ${rendered.pageCount}페이지를 감지했습니다. 전체/첫 페이지만/직접 범위를 골라 이미지로 변환할 수 있습니다.` : 'PDF 1페이지를 이미지로 변환합니다.',
     }
   }
 
@@ -1055,6 +1127,7 @@ async function convertFile(options: {
   resizeWidth?: number
   resizeHeight?: number
   pdfPageNumber?: number
+  pdfRenderQuality?: PdfRenderQuality
   gifOutputMode: GifOutputMode
   svgRasterScale?: SvgRasterScale
 }) {
@@ -1094,7 +1167,7 @@ async function convertFile(options: {
 
   let inputBlob: Blob = options.source.workingBlob ?? options.source.file
   if (options.source.mimeType === 'application/pdf') {
-    const rendered = await renderPdfPageToPngBlob(options.source.file, options.pdfPageNumber ?? 1)
+    const rendered = await renderPdfPageToPngBlob(options.source.file, options.pdfPageNumber ?? 1, options.pdfRenderQuality ?? 'balanced')
     inputBlob = rendered.blob
   }
 
@@ -1237,6 +1310,9 @@ function App() {
   const [resizeWidth, setResizeWidth] = useState('')
   const [resizeHeight, setResizeHeight] = useState('')
   const [gifOutputMode, setGifOutputMode] = useState<GifOutputMode>('poster')
+  const [pdfPageMode, setPdfPageMode] = useState<PdfPageMode>('all')
+  const [pdfPageRange, setPdfPageRange] = useState('')
+  const [pdfRenderQuality, setPdfRenderQuality] = useState<PdfRenderQuality>('balanced')
   const [fileOptions, setFileOptions] = useState<Record<string, FileSpecificOptions>>({})
   const [results, setResults] = useState<ConvertedItem[]>([])
   const [batchStatuses, setBatchStatuses] = useState<Record<string, BatchItemStatus>>({})
@@ -1255,6 +1331,9 @@ function App() {
   const originalLabel = originalMime ? mimeToLabel(originalMime) : '알 수 없음'
   const hasAnimatedGif = sourceItems.some((item) => item.animated)
   const hasSvgInput = sourceItems.some((item) => item.mimeType === 'image/svg+xml')
+  const pdfItems = useMemo(() => sourceItems.filter((item) => item.mimeType === 'application/pdf'), [sourceItems])
+  const hasPdfInput = pdfItems.length > 0
+  const maxPdfPageCount = useMemo(() => Math.max(0, ...pdfItems.map((item) => item.pageCount ?? 0)), [pdfItems])
   const isTransparentToJpg = targetFormat === 'image/jpeg' && (originalMime === 'image/png' || originalMime === 'image/webp' || originalMime === 'image/gif' || originalMime === 'image/svg+xml' || originalMime === 'image/tiff' || originalMime === 'image/vnd.adobe.photoshop')
   const qualityDisabled = targetFormat === 'image/png'
   const qualityHelper = qualityDisabled
@@ -1264,6 +1343,11 @@ function App() {
       : targetFormat === 'image/webp'
         ? 'WEBP는 사진에서 유리한 경우가 많지만, PNG·SVG·작은 그래픽·이미 최적화된 WEBP는 더 커질 수 있습니다. 웹 업로드용이라도 결과 용량 비교가 중요합니다.'
         : '일반 사진은 85~92% 정도면 품질과 용량 균형이 좋은 편입니다. HEIC, PDF, TIFF, PSD는 브라우저용 이미지로 먼저 풀어 처리하므로 원본 특성이 일부 단순화될 수 있습니다.'
+  const pdfRenderQualityHelper = pdfRenderQuality === 'fast'
+    ? '빠르게는 문서 썸네일/미리보기용에 가깝고, 작은 글자는 덜 선명할 수 있습니다.'
+    : pdfRenderQuality === 'sharp'
+      ? '고품질은 선명하지만 페이지가 많거나 큰 PDF에서는 처리 시간이 더 길 수 있습니다.'
+      : '기본은 속도와 선명도 균형형입니다. 일반 문서/슬라이드에 무난합니다.'
   const batchProgressPercent = batchProgress ? Math.round((batchProgress.completedFiles / Math.max(1, batchProgress.totalFiles)) * 100) : 0
   const largerResultCount = useMemo(() => results.filter((item) => (item.sizeDeltaPercent ?? 0) > 0).length, [results])
   const hasFiles = sourceItems.length > 0
@@ -1286,6 +1370,12 @@ function App() {
 
   const getGifOutputModeForItem = (item: SourceItem) => fileOptions[item.id]?.gifOutputMode ?? gifOutputMode
   const getSvgRasterScaleForItem = (item: SourceItem): SvgRasterScale => fileOptions[item.id]?.svgRasterScale ?? DEFAULT_SVG_RASTER_SCALE
+  const getPdfPagesForItem = (item: SourceItem) => {
+    const totalPages = item.pageCount ?? 1
+    if (pdfPageMode === 'first') return [1]
+    if (pdfPageMode === 'range') return parsePdfPageSelection(pdfPageRange, totalPages)
+    return Array.from({ length: totalPages }, (_, index) => index + 1)
+  }
 
   const animatedGifItems = useMemo(() => sourceItems.filter((item) => item.animated), [sourceItems])
   const effectiveGifSummary = useMemo(() => {
@@ -1500,6 +1590,9 @@ function App() {
     setResizeWidth('')
     setResizeHeight('')
     setGifOutputMode('poster')
+    setPdfPageMode('all')
+    setPdfPageRange('')
+    setPdfRenderQuality('balanced')
   }
 
   const updateGifFileOption = (sourceId: string, nextMode: GifOutputMode) => {
@@ -1635,6 +1728,16 @@ function App() {
       return
     }
 
+    let pdfPagesBySourceId: Record<string, number[]> = {}
+    try {
+      pdfPagesBySourceId = Object.fromEntries(
+        pdfItems.map((item) => [item.id, getPdfPagesForItem(item)]),
+      )
+    } catch (pageSelectionError) {
+      setError(getErrorMessage(pageSelectionError))
+      return
+    }
+
     setIsProcessing(true)
     setError('')
     setNotice('파일별 상태를 업데이트하며 변환하고 있습니다...')
@@ -1677,24 +1780,25 @@ function App() {
       const gifOutputModeForItem = getGifOutputModeForItem(item)
       const svgRasterScaleForItem = getSvgRasterScaleForItem(item)
       const isPdf = item.mimeType === 'application/pdf'
-      const totalPages = isPdf ? (item.pageCount ?? 1) : 1
+      const selectedPdfPages = isPdf ? (pdfPagesBySourceId[item.id] ?? [1]) : [1]
+      const outputCount = isPdf ? selectedPdfPages.length : 1
 
       setBatchStatuses((current) => ({
         ...current,
         [item.id]: {
           state: 'processing',
-          message: isPdf && totalPages > 1 ? `1 / ${totalPages}페이지 처리 중` : '변환 중',
+          message: isPdf && outputCount > 1 ? `1 / ${outputCount}페이지 처리 중` : '변환 중',
         },
       }))
       updateProgress({
         currentFileName: item.file.name,
-        currentMessage: isPdf && totalPages > 1 ? `1 / ${totalPages}페이지 처리 중` : '변환 중',
+        currentMessage: isPdf && outputCount > 1 ? `1 / ${outputCount}페이지 처리 중` : '변환 중',
       })
 
       try {
         if (isPdf) {
-          for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
-            const pageMessage = `${pageNumber} / ${totalPages}페이지 처리 중`
+          for (const [pageIndex, pageNumber] of selectedPdfPages.entries()) {
+            const pageMessage = outputCount > 1 ? `${pageIndex + 1} / ${outputCount}페이지 처리 중` : `${pageNumber}페이지 처리 중`
             setBatchStatuses((current) => ({
               ...current,
               [item.id]: {
@@ -1711,6 +1815,7 @@ function App() {
               resizeWidth: parsedWidth,
               resizeHeight: parsedHeight,
               pdfPageNumber: pageNumber,
+              pdfRenderQuality,
               gifOutputMode: gifOutputModeForItem,
               svgRasterScale: svgRasterScaleForItem,
             })
@@ -1762,13 +1867,13 @@ function App() {
           ...current,
           [item.id]: {
             state: 'success',
-            message: totalPages > 1 ? `${totalPages}페이지 변환 완료` : '변환 완료',
-            outputCount: totalPages,
+            message: isPdf ? `${outputCount}페이지 변환 완료` : '변환 완료',
+            outputCount,
           },
         }))
         updateProgress({
           currentFileName: item.file.name,
-          currentMessage: totalPages > 1 ? `${totalPages}페이지 변환 완료` : '변환 완료',
+          currentMessage: isPdf ? `${outputCount}페이지 변환 완료` : '변환 완료',
         })
       } catch (conversionError) {
         completedFiles += 1
@@ -2109,6 +2214,50 @@ function App() {
               </div>
             ) : null}
 
+            {hasPdfInput ? (
+              <>
+                <div className="field-grid">
+                  <label className="field">
+                    <span>PDF 페이지 선택</span>
+                    <select value={pdfPageMode} onChange={(event) => setPdfPageMode(event.target.value as PdfPageMode)} disabled={isProcessing}>
+                      <option value="all">전체 페이지</option>
+                      <option value="first">첫 페이지만</option>
+                      <option value="range">직접 범위 지정</option>
+                    </select>
+                    <small>{pdfPageMode === 'all' ? '여러 페이지 PDF는 모든 페이지를 순서대로 이미지로 만듭니다.' : pdfPageMode === 'first' ? '표지/첫 장 미리보기처럼 빠르게 한 페이지만 뽑습니다.' : '예: 1-3,5,8 처럼 입력할 수 있습니다.'}</small>
+                  </label>
+                  <label className="field">
+                    <span>PDF 렌더링 품질</span>
+                    <select value={pdfRenderQuality} onChange={(event) => setPdfRenderQuality(event.target.value as PdfRenderQuality)} disabled={isProcessing}>
+                      <option value="fast">빠르게</option>
+                      <option value="balanced">기본</option>
+                      <option value="sharp">고품질</option>
+                    </select>
+                    <small>{pdfRenderQualityHelper}</small>
+                  </label>
+                </div>
+                {pdfPageMode === 'range' ? (
+                  <div className="field-grid">
+                    <label className="field">
+                      <span>PDF 페이지 범위</span>
+                      <input value={pdfPageRange} onChange={(event) => setPdfPageRange(event.target.value)} placeholder="예: 1-3,5,8" disabled={isProcessing} />
+                      <small>여러 PDF를 한 번에 돌릴 때도 같은 페이지 규칙을 적용합니다.</small>
+                    </label>
+                  </div>
+                ) : null}
+                <div className="warning-box">
+                  <strong>PDF 처리 안내</strong>
+                  <p>PDF는 페이지를 이미지처럼 렌더링해 순서대로 결과를 만듭니다. 텍스트 선택 기능은 유지되지 않고, 렌더링 품질이 높을수록 더 선명하지만 더 느릴 수 있습니다.</p>
+                </div>
+                {maxPdfPageCount > 12 ? (
+                  <div className="warning-box">
+                    <strong>페이지 많은 PDF 주의</strong>
+                    <p>현재 업로드된 PDF 중 최대 {maxPdfPageCount}페이지 파일이 있습니다. 큰 문서는 전체보다 첫 페이지/범위 지정으로 시작하면 더 안정적입니다.</p>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+
             {hasAnimatedGif ? (
               <>
                 <div className="field-grid">
@@ -2229,6 +2378,8 @@ function App() {
                 <li>첫 파일 형식: {originalLabel}</li>
                 <li>출력 형식: {targetLabel}</li>
                 <li>처리 모드: {mode === 'convert' ? '포맷 변환' : '압축 / 리사이즈'}</li>
+                {hasPdfInput ? <li>PDF 페이지: {pdfPageMode === 'all' ? '전체' : pdfPageMode === 'first' ? '첫 페이지만' : pdfPageRange || '직접 범위'}</li> : null}
+                {hasPdfInput ? <li>PDF 품질: {pdfRenderQuality === 'fast' ? '빠르게' : pdfRenderQuality === 'sharp' ? '고품질' : '기본'}</li> : null}
                 {hasAnimatedGif ? <li>GIF 처리: {effectiveGifSummary.label}</li> : null}
               </ul>
             ) : (

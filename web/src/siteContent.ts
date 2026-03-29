@@ -611,6 +611,7 @@ export const staticPages: Record<string, StaticPage> = {
           '검증 및 운영 현황 페이지(`/status`) 공개',
           '주요 URL 200 응답 재점검 및 크롤링 관점 점검',
           '무료 도메인 상태에서 신뢰 신호를 더 보강하는 방향으로 문서 정리',
+          'PDF에 전체/첫 페이지만/직접 범위 선택과 렌더링 품질 옵션 추가',
         ],
       },
       {
@@ -653,7 +654,7 @@ export const staticPages: Record<string, StaticPage> = {
           'BMP → JPG/PNG/WEBP',
           'GIF → 대표 프레임 JPG/PNG/WEBP 또는 프레임 시트 PNG',
           'SVG → PNG/JPG/WEBP로 래스터 변환',
-          'PDF → 페이지별 이미지 출력',
+          'PDF → 전체/첫 페이지만/직접 범위를 골라 페이지별 이미지 출력',
           'TIFF → 브라우저가 읽을 수 있는 이미지 기준 출력',
         ],
       },
