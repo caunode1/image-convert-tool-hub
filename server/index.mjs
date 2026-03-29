@@ -13,6 +13,14 @@ initializeCanvas(createNodeCanvas, (w, h) => new ImageData(w, h))
 const app = express()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 64 * 1024 * 1024 } })
 
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  if (req.method === 'OPTIONS') return res.status(204).end()
+  next()
+})
+
 const TARGET_MIME = {
   jpeg: 'image/jpeg',
   jpg: 'image/jpeg',

@@ -1,3 +1,11 @@
+interface ImportMetaEnv {
+  readonly VITE_SPECIAL_FORMAT_SERVER_URL?: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
+
 declare module 'utif' {
   type TiffIfd = Record<string, unknown>
 

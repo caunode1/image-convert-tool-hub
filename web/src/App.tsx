@@ -72,6 +72,9 @@ const CURRENT_LIMITATIONS = [
   'HEIF/PSD의 복잡한 변형은 샘플 범위를 더 넓혀야 합니다.',
   'Search Console 등록과 인덱싱 확인은 아직 남아 있습니다.',
 ] as const
+const SPECIAL_FORMAT_SERVER_URL = (import.meta.env.VITE_SPECIAL_FORMAT_SERVER_URL ?? '').trim().replace(/\/$/, '')
+const SERVER_ENHANCED_INPUT_MIME_TYPES = new Set(['image/heic', 'image/heif', 'application/pdf', 'image/tiff', 'image/vnd.adobe.photoshop'])
+const SERVER_PREVIEW_FALLBACK_SIZE = { width: 160, height: 120 } as const
 
 const RAW_FILE_EXTENSIONS = new Set([
   '.3fr',
@@ -219,6 +222,7 @@ type SourceItem = {
   frameCount?: number
   note?: string
   workingBlob?: Blob
+  serverEnhanced?: boolean
 }
 
 type ConvertedItem = {
@@ -410,6 +414,90 @@ function svgRasterScaleLabel(scale: SvgRasterScale) {
 function getErrorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message
   return '변환 중 오류가 발생했습니다.'
+}
+
+function hasSpecialFormatServer() {
+  return Boolean(SPECIAL_FORMAT_SERVER_URL)
+}
+
+function isServerEnhancedMime(mimeType: string) {
+  return SERVER_ENHANCED_INPUT_MIME_TYPES.has(mimeType)
+}
+
+function shouldPreferServerEnhancement(source: SourceItem) {
+  return hasSpecialFormatServer() && (source.serverEnhanced || isServerEnhancedMime(source.mimeType))
+}
+
+function createServerPreviewUrl(label: string) {
+  const safeLabel = label.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${SERVER_PREVIEW_FALLBACK_SIZE.width}" height="${SERVER_PREVIEW_FALLBACK_SIZE.height}" viewBox="0 0 ${SERVER_PREVIEW_FALLBACK_SIZE.width} ${SERVER_PREVIEW_FALLBACK_SIZE.height}">
+      <rect width="100%" height="100%" rx="18" fill="#0f172a"/>
+      <rect x="10" y="10" width="140" height="100" rx="14" fill="#172554" stroke="#334155"/>
+      <text x="80" y="58" text-anchor="middle" fill="#c7d2fe" font-size="18" font-family="Arial, sans-serif" font-weight="700">${safeLabel}</text>
+      <text x="80" y="82" text-anchor="middle" fill="#93c5fd" font-size="11" font-family="Arial, sans-serif">server enhanced</text>
+    </svg>
+  `.trim()
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
+function createServerBackedSourceItem(file: File, mimeType: string, id: string, reason?: string): SourceItem {
+  const label = mimeToLabel(mimeType)
+  const guidance = mimeType === 'application/pdf'
+    ? '브라우저 미리보기가 어려워 서버 변환 경로를 사용합니다. PDF 페이지 수/범위는 변환 시 서버에서 처리합니다.'
+    : `${label} 파일은 브라우저 대신 서버 변환 경로를 우선 사용합니다.`
+  return {
+    id,
+    file,
+    previewUrl: createServerPreviewUrl(label),
+    width: SERVER_PREVIEW_FALLBACK_SIZE.width,
+    height: SERVER_PREVIEW_FALLBACK_SIZE.height,
+    sizeLabel: formatBytes(file.size),
+    mimeType,
+    note: reason ? `${guidance} (${reason})` : guidance,
+    serverEnhanced: true,
+  }
+}
+
+async function convertViaSpecialFormatServer(options: {
+  source: SourceItem
+  targetFormat: TargetFormat
+  quality: number
+  pdfPageNumber?: number
+  pdfRenderQuality?: PdfRenderQuality
+}) {
+  if (!hasSpecialFormatServer()) throw new Error('특수 포맷 서버 URL이 설정되지 않았습니다.')
+  const form = new FormData()
+  form.append('file', options.source.file)
+  form.append('targetFormat', mimeToExtension(options.targetFormat) === 'jpg' ? 'jpeg' : mimeToExtension(options.targetFormat))
+  form.append('quality', String(Math.round(options.quality * 100)))
+
+  if (options.source.mimeType === 'application/pdf') {
+    if (typeof options.pdfPageNumber === 'number') {
+      form.append('pdfPageMode', 'range')
+      form.append('pdfPageRange', String(options.pdfPageNumber))
+    } else {
+      form.append('pdfPageMode', 'first')
+    }
+    form.append('pdfQuality', options.pdfRenderQuality ?? 'balanced')
+  }
+
+  const response = await fetch(`${SPECIAL_FORMAT_SERVER_URL}/api/convert`, {
+    method: 'POST',
+    body: form,
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    throw new Error(payload?.error || `서버 변환 요청이 실패했습니다. (${response.status})`)
+  }
+
+  const blob = await response.blob()
+  if (blob.type === 'application/zip') {
+    throw new Error('현재 프론트 1차 연동은 PDF 여러 페이지 ZIP 반환을 아직 직접 처리하지 않습니다.')
+  }
+  const image = await loadImageFromBlob(blob)
+  return { blob, width: image.naturalWidth, height: image.naturalHeight }
 }
 
 function createInitialFileOptions(items: SourceItem[]) {
@@ -991,73 +1079,99 @@ async function prepareSourceItem(file: File): Promise<SourceItem> {
   const id = `${file.name}-${file.lastModified}-${file.size}`
 
   if (mimeType === 'image/heic' || mimeType === 'image/heif') {
-    const heic2any = await loadHeicConverter()
-    const converted = await heic2any({ blob: file, toType: 'image/png' })
-    const blob = Array.isArray(converted) ? converted[0] : converted
-    if (!(blob instanceof Blob)) {
-      throw new Error('HEIC/HEIF 파일을 브라우저용 이미지로 바꾸지 못했습니다.')
-    }
-    const previewUrl = URL.createObjectURL(blob)
-    const image = await loadImageFromBlob(blob)
-    return {
-      id,
-      file,
-      previewUrl,
-      width: image.naturalWidth,
-      height: image.naturalHeight,
-      sizeLabel: formatBytes(file.size),
-      mimeType,
-      workingBlob: blob,
-      note: 'HEIC/HEIF는 먼저 PNG로 바꿔 처리합니다. 일반적인 단일 사진은 대체로 괜찮지만 일부 HEIF 변형은 실패할 수 있습니다.',
+    try {
+      const heic2any = await loadHeicConverter()
+      const converted = await heic2any({ blob: file, toType: 'image/png' })
+      const blob = Array.isArray(converted) ? converted[0] : converted
+      if (!(blob instanceof Blob)) {
+        throw new Error('HEIC/HEIF 파일을 브라우저용 이미지로 바꾸지 못했습니다.')
+      }
+      const previewUrl = URL.createObjectURL(blob)
+      const image = await loadImageFromBlob(blob)
+      return {
+        id,
+        file,
+        previewUrl,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        sizeLabel: formatBytes(file.size),
+        mimeType,
+        workingBlob: blob,
+        note: hasSpecialFormatServer()
+          ? 'HEIC/HEIF는 브라우저에서 미리보기하고, 실제 변환은 서버 보강 경로를 함께 사용할 수 있습니다.'
+          : 'HEIC/HEIF는 먼저 PNG로 바꿔 처리합니다. 일반적인 단일 사진은 대체로 괜찮지만 일부 HEIF 변형은 실패할 수 있습니다.',
+        serverEnhanced: hasSpecialFormatServer(),
+      }
+    } catch (error) {
+      if (hasSpecialFormatServer()) return createServerBackedSourceItem(file, mimeType, id, getErrorMessage(error))
+      throw error
     }
   }
 
   if (mimeType === 'application/pdf') {
-    const rendered = await renderPdfPageToPngBlob(file, 1)
-    const previewUrl = URL.createObjectURL(rendered.blob)
-    return {
-      id,
-      file,
-      previewUrl,
-      width: rendered.width,
-      height: rendered.height,
-      sizeLabel: formatBytes(file.size),
-      mimeType,
-      pageCount: rendered.pageCount,
-      note: rendered.pageCount > 1 ? `PDF ${rendered.pageCount}페이지를 감지했습니다. 전체/첫 페이지만/직접 범위를 골라 이미지로 변환할 수 있습니다.` : 'PDF 1페이지를 이미지로 변환합니다.',
+    try {
+      const rendered = await renderPdfPageToPngBlob(file, 1)
+      const previewUrl = URL.createObjectURL(rendered.blob)
+      return {
+        id,
+        file,
+        previewUrl,
+        width: rendered.width,
+        height: rendered.height,
+        sizeLabel: formatBytes(file.size),
+        mimeType,
+        pageCount: rendered.pageCount,
+        note: rendered.pageCount > 1 ? `PDF ${rendered.pageCount}페이지를 감지했습니다. 전체/첫 페이지만/직접 범위를 골라 이미지로 변환할 수 있습니다.` : 'PDF 1페이지를 이미지로 변환합니다.',
+        serverEnhanced: hasSpecialFormatServer(),
+      }
+    } catch (error) {
+      if (hasSpecialFormatServer()) return createServerBackedSourceItem(file, mimeType, id, getErrorMessage(error))
+      throw error
     }
   }
 
   if (mimeType === 'image/tiff') {
-    const rendered = await renderTiffToPngBlob(file)
-    const previewUrl = URL.createObjectURL(rendered.blob)
-    return {
-      id,
-      file,
-      previewUrl,
-      width: rendered.width,
-      height: rendered.height,
-      sizeLabel: formatBytes(file.size),
-      mimeType,
-      pageCount: rendered.pageCount,
-      workingBlob: rendered.blob,
-      note: rendered.pageCount > 1 ? 'TIFF는 가장 큰 페이지 1장 기준으로 변환합니다.' : 'TIFF 파일을 브라우저용 이미지로 읽어 변환합니다.',
+    try {
+      const rendered = await renderTiffToPngBlob(file)
+      const previewUrl = URL.createObjectURL(rendered.blob)
+      return {
+        id,
+        file,
+        previewUrl,
+        width: rendered.width,
+        height: rendered.height,
+        sizeLabel: formatBytes(file.size),
+        mimeType,
+        pageCount: rendered.pageCount,
+        workingBlob: rendered.blob,
+        note: rendered.pageCount > 1 ? 'TIFF는 가장 큰 페이지 1장 기준으로 변환합니다.' : 'TIFF 파일을 브라우저용 이미지로 읽어 변환합니다.',
+        serverEnhanced: hasSpecialFormatServer(),
+      }
+    } catch (error) {
+      if (hasSpecialFormatServer()) return createServerBackedSourceItem(file, mimeType, id, getErrorMessage(error))
+      throw error
     }
   }
 
   if (mimeType === 'image/vnd.adobe.photoshop') {
-    const rendered = await renderPsdToPngBlob(file)
-    const previewUrl = URL.createObjectURL(rendered.blob)
-    return {
-      id,
-      file,
-      previewUrl,
-      width: rendered.width,
-      height: rendered.height,
-      sizeLabel: formatBytes(file.size),
-      mimeType,
-      workingBlob: rendered.blob,
-      note: rendered.note,
+    try {
+      const rendered = await renderPsdToPngBlob(file)
+      const previewUrl = URL.createObjectURL(rendered.blob)
+      return {
+        id,
+        file,
+        previewUrl,
+        width: rendered.width,
+        height: rendered.height,
+        sizeLabel: formatBytes(file.size),
+        mimeType,
+        workingBlob: rendered.blob,
+        note: hasSpecialFormatServer() ? `${rendered.note} 서버 보강 경로도 사용할 수 있습니다.` : rendered.note,
+        serverEnhanced: hasSpecialFormatServer(),
+      }
+    } catch (error) {
+      if (hasSpecialFormatServer()) return createServerBackedSourceItem(file, mimeType, id, getErrorMessage(error))
+      throw error
     }
   }
 
@@ -1131,6 +1245,16 @@ async function convertFile(options: {
   gifOutputMode: GifOutputMode
   svgRasterScale?: SvgRasterScale
 }) {
+  if (shouldPreferServerEnhancement(options.source)) {
+    return convertViaSpecialFormatServer({
+      source: options.source,
+      targetFormat: options.targetFormat,
+      quality: options.quality,
+      pdfPageNumber: options.pdfPageNumber,
+      pdfRenderQuality: options.pdfRenderQuality,
+    })
+  }
+
   if (options.source.mimeType === 'image/gif' && options.source.animated) {
     const gifRendered = await convertGifToWorkingBlob({
       source: options.source,
@@ -1672,7 +1796,9 @@ function App() {
         svgCount ? `SVG ${svgCount}개는 파일별 선명도 옵션을 함께 조절할 수 있습니다.` : '',
       ].filter(Boolean)
 
-      setNotice(`${supported.length}개 파일을 불러왔습니다.${excludedMessages.length ? ` ${excludedMessages.join(' ')}` : ''}`)
+      const serverEnhancedCount = supported.filter((item) => item.serverEnhanced).length
+      const serverMessage = serverEnhancedCount ? ` 특수 포맷 ${serverEnhancedCount}개는 서버 보강 경로를 함께 사용할 수 있습니다.` : ''
+      setNotice(`${supported.length}개 파일을 불러왔습니다.${excludedMessages.length ? ` ${excludedMessages.join(' ')}` : ''}${serverMessage}`)
     } else if (rawNames.length && !unsupportedNames.length && !readFailures.length) {
       setError('RAW 파일은 아직 지원하지 않습니다. 브라우저 버전에서는 TIFF·PSD까지 우선 지원하고, NEF/CR2/ARW/DNG 등은 다음 단계 검토 대상입니다.')
     } else if (readFailures.length && !unsupportedNames.length && !rawNames.length) {
@@ -2102,6 +2228,7 @@ function App() {
                   <div>
                     <strong>{sourceItems.length}개 파일 업로드 완료</strong>
                     <p>입력 형식: {[...new Set(sourceItems.map((item) => mimeToLabel(item.mimeType)))].join(', ')}</p>
+                    {hasSpecialFormatServer() ? <p className="muted-helper-text">특수 포맷은 브라우저가 어려워하면 서버 보강 경로를 자동으로 사용합니다.</p> : null}
                   </div>
                   <span className="helper-pill">특수 파일은 아래에서 개별 설정</span>
                 </div>
@@ -2127,6 +2254,7 @@ function App() {
                         </div>
 
                         {item.note ? <small>{item.note}</small> : null}
+                        {item.serverEnhanced ? <small>현재 설정된 특수 포맷 서버로 보강 처리할 수 있습니다.</small> : null}
 
                         {item.animated || item.mimeType === 'image/svg+xml' ? (
                           <div className="file-option-grid">
